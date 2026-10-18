@@ -37,9 +37,9 @@ describe('runBenchmark', () => {
       { taskId: 'refactor-1', condition: 'C', success: false, durationMs: 0, tokensUsed: 0, costMicros: 0 },
     ]);
     expect(report.totalTasks).toBe(2);
-    expect(report.conditionResults.A).toEqual({ passRate: 0, avgDurationMs: 1_800_000, totalCostMicros: 2_000_000, efficiencyScore: 0 });
-    expect(report.conditionResults.B).toEqual({ passRate: 0, avgDurationMs: 0, totalCostMicros: 0, efficiencyScore: 0 });
-    expect(report.conditionResults.C).toEqual({ passRate: 0.5, avgDurationMs: 1_800_000, totalCostMicros: 1_000_000, efficiencyScore: 0.5 });
+    expect(report.conditionResults.A).toEqual({ passRate: 0, avgDurationMs: 1_800_000, totalCostMicros: 2_000_000, efficiencyScore: 0, successfulTaskCostMicros: 0, successfulTaskCostVarianceMicros: 0, successfulTaskCostCi95Micros: [0, 0] });
+    expect(report.conditionResults.B).toEqual({ passRate: 0, avgDurationMs: 0, totalCostMicros: 0, efficiencyScore: 0, successfulTaskCostMicros: 0, successfulTaskCostVarianceMicros: 0, successfulTaskCostCi95Micros: [0, 0] });
+    expect(report.conditionResults.C).toEqual({ passRate: 0.5, avgDurationMs: 1_800_000, totalCostMicros: 1_000_000, efficiencyScore: 0.5, successfulTaskCostMicros: 1_000_000, successfulTaskCostVarianceMicros: 0, successfulTaskCostCi95Micros: [1_000_000, 1_000_000] });
   });
 
   it('records rejected task executions as failed trials and keeps comparing conditions', async () => {
@@ -53,5 +53,11 @@ describe('runBenchmark', () => {
 
     expect(report.results[0]).toMatchObject({ success: false, error: 'test command failed' });
     expect(report.results[1]).toMatchObject({ condition: 'B', success: true });
+  });
+
+  it('reports variance across successful task costs', async () => {
+    const report = await runBenchmark([1, 3].map((cost, index) => ({ ...tasks[0]!, id: `success-${index}`, run: async () => ({ success: true, durationMs: 0, tokensUsed: 1, costMicros: cost }) })), ['A']);
+    expect(report.conditionResults.A.successfulTaskCostMicros).toBe(2);
+    expect(report.conditionResults.A.successfulTaskCostVarianceMicros).toBe(1);
   });
 });

@@ -58,11 +58,25 @@ ctx task resume <taskId> my-project
 
 # Synchronize agent instruction files (AGENTS.md, CLAUDE.md)
 ctx instructions sync
+
+# Install or remove Claude Code lifecycle hooks
+ctx hooks install [--dry-run] [--global]
+ctx hooks uninstall [--global]
 ```
+
+## Hooks
+
+Claude Code hooks add a compact repository and checkpoint summary at session start, then save Git-state checkpoints on stop and before compaction. Project settings are written to `.claude/settings.json`; pass `--global` to use the user settings file. `--dry-run` previews installation without writing. Hook failures are silent and never stop the agent.
 
 ---
 
 ## 📊 Economics & Savings Model
+
+## Measuring savings
+
+`ctx bench retrieval` compares whole-file literal-search reading with Weft's default 1500-token compact context for each query in `tests/golden/queries.json`. The report shows per-query token estimates, expected-file coverage, and mean/median tokens and ratios. It measures retrieval cost only, not end-to-end task cost. Reports are written under the Weft user state directory (`benchmarks/`); use `--repo <name>` for a registered repository and `--json` for machine-readable output.
+
+`ctx bench run --suite tests/benchmarks/suites/example.json --harness 'claude -p "{prompt}" --output-format json'` runs each task in isolated repo copies under conditions A (baseline), B (managed instructions), and C (instructions, MCP config, and a local index). The template must contain `{prompt}`; `{repoPath}` is also available. Harness JSON usage is labeled `provider_reported` when available; otherwise tokens are estimated and labeled `estimated`. Success requires both harness and `testCommand` to exit successfully. The report includes mean successful-task cost and its population variance per condition. Replace the example tasks with real, reproducible tasks before using results as evidence. No live results exist yet.
 
 $$\text{Efficiency Score} = \frac{\text{Verified Tasks Completed}}{\text{Total Token Cost (\$) + Latency Overhead (Hours)}}$$
 

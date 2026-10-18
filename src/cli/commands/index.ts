@@ -17,9 +17,9 @@ import { getGitRoot, getHeadCommit, getWorkingTreeStatus } from '../../core/gits
 import { computeWorkingTreeFingerprint } from '../../core/fingerprint/hasher.js';
 import { normalizeCanonicalPath } from '../../config/paths.js';
 import { fuzzyFindRepo } from '../../core/registry/repoRegistry.js';
-import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES } from '../../integrations/claude-code/index.js';
+import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES, hookStateDir, installClaudeHooks, runCheckpointHook, runSessionStartHook, uninstallClaudeHooks } from '../../integrations/claude-code/index.js';
 import { syncCodexInstructions, CODEX_GUIDELINES } from '../../integrations/codex/index.js';
-import { checkInstructions, syncInstructions } from '../../integrations/instructions.js';
+import { checkInstructions } from '../../integrations/instructions.js';
 import { getCacheDiagnostics, getCostSummary, listSessions } from '../../telemetry/analytics.js';
 import { migrateDevPulse } from '../../migration/devpulse/migrator.js';
 import { openDatabase } from '../../storage/db.js';
@@ -27,6 +27,8 @@ import { migrate } from '../../storage/migrator.js';
 import type Database from 'better-sqlite3';
 import { installMcpConfig, type Harness } from '../../integrations/mcpConfig.js';
 import { serveMcp } from '../../mcp/server.js';
+import { runRetrievalBenchmark } from '../../bench/retrieval.js';
+import { loadSuite, runLiveSuite } from '../../bench/live.js';
 
 type Result = { code: number; data?: unknown; warnings?: string[]; errors?: string[]; status?: string };
 class CommandError extends Error { constructor(message: string, readonly exitCode: number) { super(message); } }
@@ -122,6 +124,17 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     if (!isHarness(harness)) fail('--harness must be claude-code, codex, opencode, or t3', 2);
     const result = await installMcpConfig(harness, { home: process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(), project: process.cwd(), dryRun: args.includes('--dry-run') });
     return { code: 0, data: result };
+  }
+  if (group === 'hook') {
+    if (sub === 'session-start') { const data = await runSessionStartHook({ stateDir: hookStateDir() }); return { code: 0, data: data || undefined }; }
+    if (sub === 'stop' || sub === 'pre-compact') { await runCheckpointHook({ stateDir: hookStateDir() }); return { code: 0, data: '' }; }
+    fail('Use `ctx hook session-start|stop|pre-compact`.', 2);
+  }
+  if (group === 'hooks') {
+    const options = { projectRoot: process.cwd(), home: process.env.HOME ?? process.env.USERPROFILE, global: args.includes('--global'), dryRun: args.includes('--dry-run') };
+    if (sub === 'install') return { code: 0, data: await installClaudeHooks(options) };
+    if (sub === 'uninstall') return { code: 0, data: await uninstallClaudeHooks(options) };
+    fail('Use `ctx hooks install|uninstall [--global] [--dry-run]`.', 2);
   }
   if (group === 'onboard') {
     const target = positional(args.slice(1))[0] ?? process.cwd();
@@ -243,7 +256,26 @@ export async function runCommand(args: string[], compactOutput = false): Promise
       return { code: 0, data: group === 'cache' ? getCacheDiagnostics(db, { since }) : getCostSummary(db, { since, by }) };
     } finally { db.close(); }
   }
-  if (group === 'bench') fail('Benchmark suites are not configured in this build.', 3);
+  if (group === 'bench' && sub === 'retrieval') {
+    const db = database();
+    try {
+      const repo = repoRow(db, option(rest, '--repo'));
+      await indexRepository(db, repo.id, repo.root_path);
+      const queryFile = join(process.cwd(), 'tests', 'golden', 'queries.json');
+      if (!existsSync(queryFile)) fail(`Golden query file not found: ${queryFile}`, 3);
+      const queries = JSON.parse(await readFile(queryFile, 'utf8')) as Array<{ query: string; expectedTop3: string[] }>;
+      const report = await runRetrievalBenchmark(db, repo.id, repo.root_path, queries, join(paths.state, 'benchmarks'));
+      return { code: 0, data: report };
+    } finally { db.close(); }
+  }
+  if (group === 'bench' && sub === 'run') {
+    const suitePath = resolve(option(rest, '--suite') ?? 'tests/benchmarks/suites/example.json');
+    const harness = option(rest, '--harness') ?? process.env.WEFT_BENCH_HARNESS;
+    if (!harness) fail('Set --harness "command template containing {prompt}" or WEFT_BENCH_HARNESS.', 2);
+    const report = await runLiveSuite(await loadSuite(suitePath), harness);
+    return { code: 0, data: { ...report, usageProvenance: 'Each trial labels provider_reported or estimated usage.', costPerSuccessfulTaskVariance: 'Population variance in costMicros squared.' } };
+  }
+  if (group === 'bench') fail('Use `ctx bench retrieval [--repo <name>] [--json]` or `ctx bench run --suite <file> --harness <template>`.', 2);
   if (group === 'clean') {
     const db = database(); try {
       const scope = option(args, '--scope', 'indexes'); if (!['indexes', 'all'].includes(scope!)) fail('--scope must be indexes or all', 2);
@@ -265,8 +297,8 @@ export async function runCommand(args: string[], compactOutput = false): Promise
 }
 
 function validateFlags(args: string[]): void {
-  const valueFlags = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite', '--harness']);
-  const known = new Set([...valueFlags, '--force', '--repair', '--dry-run', '--keep-data', '--interactive', '--yes']);
+  const valueFlags = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite', '--harness', '--repo']);
+  const known = new Set([...valueFlags, '--force', '--repair', '--dry-run', '--keep-data', '--interactive', '--yes', '--global']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (!arg.startsWith('--')) continue;

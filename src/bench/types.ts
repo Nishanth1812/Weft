@@ -12,6 +12,7 @@ export interface TaskDefinition {
   category: 'bugfix' | 'refactor' | 'feature';
   repoPath: string;
   testCommand: string;
+  prompt?: string;
 }
 
 export interface TrialExecution {
@@ -19,6 +20,8 @@ export interface TrialExecution {
   durationMs: number;
   tokensUsed: number;
   costMicros: number;
+  tokenProvenance?: 'provider_reported' | 'estimated';
+  costProvenance?: 'provider_reported' | 'estimated';
   error?: string;
 }
 
@@ -38,6 +41,9 @@ export interface BenchmarkSummary {
     avgDurationMs: number;
     totalCostMicros: number;
     efficiencyScore: number;
+    successfulTaskCostMicros: number;
+    successfulTaskCostVarianceMicros: number;
+    successfulTaskCostCi95Micros: [number, number];
   }>;
 }
 

@@ -15,7 +15,7 @@ async function makeRepo(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(repos.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(repos.splice(0).map((path) => rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })));
 });
 
 describe('gitRunner', () => {

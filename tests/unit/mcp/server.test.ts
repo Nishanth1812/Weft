@@ -8,6 +8,7 @@ migrate(db);
 const repoId = 'repo-test';
 db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run(repoId, process.cwd(), 'test', new Date().toISOString(), new Date().toISOString());
 const generation = Number(db.prepare("INSERT INTO index_generations (repo_id, fingerprint, status, started_at, completed_at) VALUES (?, ?, 'ready', ?, ?)").run(repoId, 'fp', new Date().toISOString(), new Date().toISOString()).lastInsertRowid);
+db.prepare("INSERT INTO repo_index_state (repo_id, active_generation, schema_version, updated_at) VALUES (?, ?, 2, ?)").run(repoId, generation, new Date().toISOString());
 const fileId = Number(db.prepare('INSERT INTO files (repo_id, generation_id, path, content_hash, mtime_ms, size_bytes, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(repoId, generation, 'secret.ts', 'hash', 0, 80, new Date().toISOString()).lastInsertRowid);
 db.prepare('INSERT INTO chunks (file_id, ordinal, start_line, end_line, content_hash, safe_text, token_estimate) VALUES (?, ?, ?, ?, ?, ?, ?)').run(fileId, 0, 1, 3, 'hash', 'const token = AKIA1234567890ABCDEF;\nsecond line\nthird line', 12);
 

@@ -20,6 +20,9 @@ function summarize(results: TrialResult[], totalTasks: number): BenchmarkReport[
     const successCount = trials.filter((result) => result.success).length;
     const totalDurationMs = trials.reduce((total, result) => total + result.durationMs, 0);
     const totalCostMicros = trials.reduce((total, result) => total + result.costMicros, 0);
+    const successfulCosts = trials.filter((result) => result.success).map((result) => result.costMicros);
+    const successfulTaskCostMicros = successfulCosts.length ? successfulCosts.reduce((sum, cost) => sum + cost, 0) / successfulCosts.length : 0;
+    const successfulTaskCostVarianceMicros = successfulCosts.length ? successfulCosts.reduce((sum, cost) => sum + (cost - successfulTaskCostMicros) ** 2, 0) / successfulCosts.length : 0;
     const timeOverheadHours = totalDurationMs / 3_600_000;
     const denominator = totalCostMicros / 1_000_000 + timeOverheadHours;
 
@@ -28,6 +31,9 @@ function summarize(results: TrialResult[], totalTasks: number): BenchmarkReport[
       avgDurationMs: totalTasks ? totalDurationMs / totalTasks : 0,
       totalCostMicros,
       efficiencyScore: denominator ? successCount / denominator : 0,
+      successfulTaskCostMicros,
+      successfulTaskCostVarianceMicros,
+      successfulTaskCostCi95Micros: [successfulTaskCostMicros - 1.96 * Math.sqrt(successfulTaskCostVarianceMicros / (successfulCosts.length || 1)), successfulTaskCostMicros + 1.96 * Math.sqrt(successfulTaskCostVarianceMicros / (successfulCosts.length || 1))],
     }];
   })) as BenchmarkReport['conditionResults'];
 }

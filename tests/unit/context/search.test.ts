@@ -10,6 +10,7 @@ describe('searchChunks', () => {
       migrate(db);
       db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r1', '/', 'r1', 'now', 'now');
       const generation = Number(db.prepare("INSERT INTO index_generations (repo_id, fingerprint, status, started_at) VALUES ('r1', 'f', 'ready', 'now')").run().lastInsertRowid);
+      db.prepare("INSERT INTO repo_index_state (repo_id, active_generation, schema_version, updated_at) VALUES ('r1', ?, 2, 'now')").run(generation);
       const file = Number(db.prepare("INSERT INTO files (repo_id, generation_id, path, content_hash, mtime_ms, size_bytes, indexed_at) VALUES ('r1', ?, 'src/a.ts', 'h', 0, 20, 'now')").run(generation).lastInsertRowid);
       db.prepare("INSERT INTO chunks (file_id, ordinal, start_line, end_line, content_hash, safe_text, token_estimate) VALUES (?, 0, 4, 6, 'h', 'needle needle distinctive', 8)").run(file);
       const hits = searchChunks(db, 'r1', 'needle');

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../../src/storage/db.js';
 import { migrate } from '../../../src/storage/migrator.js';
 import { indexRepository } from '../../../src/indexer/indexer.js';
+import { searchChunks } from '../../../src/context/search.js';
 
 describe('indexRepository', () => {
   let root: string;
@@ -38,5 +39,20 @@ describe('indexRepository', () => {
     expect(active2.active_generation).not.toBe(active1.active_generation);
     expect(db.prepare('SELECT status FROM index_generations WHERE id = ?').get(active2.active_generation)).toEqual({ status: 'ready' });
     expect(db.prepare("SELECT COUNT(*) AS count FROM chunk_fts WHERE chunk_fts MATCH 'changedSearchTerm'").get()).toEqual({ count: 1 });
+  });
+
+  it('stops returning deleted files after publishing a new generation', async () => {
+    root = await mkdtemp(join(tmpdir(), 'weft-indexer-'));
+    db = openDatabase(':memory:'); migrate(db);
+    db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', root, 'r', 'now', 'now');
+    await writeFile(join(root, 'deleted.ts'), 'export const removedSearchTerm = true;');
+    await indexRepository(db, 'r', root);
+    expect(searchChunks(db, 'r', 'removedSearchTerm')).toHaveLength(1);
+
+    await rm(join(root, 'deleted.ts'));
+    const next = await indexRepository(db, 'r', root);
+
+    expect(next.files).toBe(0);
+    expect(searchChunks(db, 'r', 'removedSearchTerm')).toEqual([]);
   });
 });

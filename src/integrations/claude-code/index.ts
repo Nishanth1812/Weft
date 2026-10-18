@@ -11,3 +11,5 @@ export async function runHookSafely<T>(hook: () => T | Promise<T>, timeoutMs = 4
   const timeout = Math.min(Math.max(timeoutMs, 1), 499);
   return Promise.race([Promise.resolve().then(hook), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeout))]);
 }
+
+export { hookSettingsRoot, hookStateDir, installClaudeHooks, runCheckpointHook, runSessionStartHook, uninstallClaudeHooks } from '../../hooks/claude.js';
