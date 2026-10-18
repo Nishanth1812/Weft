@@ -41,4 +41,16 @@ describe('taskManager', () => {
       expect(resumeTask(db, task.id, 'fp').verificationText!.length).toBeLessThan(200);
     } finally { db.close(); }
   });
+  it('redacts secret text before checkpoint payloads are stored or returned', () => {
+    const db = openDatabase(':memory:');
+    const token = 'ghp_' + 'A'.repeat(36);
+    try {
+      migrate(db);
+      db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', '/', 'r', 'now', 'now');
+      const task = createTask(db, 'r', 'Checkpoint');
+      const checkpoint = saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: 'fp', objective: token, status: 'active', findings: [{ text: token, evidence: [] }], decisions: [token], verification: [], nextAction: token });
+      expect(JSON.stringify(checkpoint)).not.toContain(token);
+      expect(db.prepare('SELECT payload_json FROM checkpoints').pluck().get()).not.toContain(token);
+    } finally { db.close(); }
+  });
 });

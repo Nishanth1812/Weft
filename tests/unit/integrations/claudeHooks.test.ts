@@ -55,7 +55,7 @@ describe('Claude Code hooks', () => {
     const check = openDatabase(stateDir);
     try {
       const rows = check.prepare('SELECT payload_json FROM checkpoints').all() as Array<{ payload_json: string }>;
-      expect(rows).toHaveLength(1);
+      expect(rows, await readFile(join(stateDir, 'hooks.log'), 'utf8').catch(() => 'no hook log')).toHaveLength(1);
       expect(rows[0]!.payload_json).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij');
       expect(rows[0]!.payload_json).toContain('[REDACTED_SECRET:');
       const checkpoint = JSON.parse(rows[0]!.payload_json) as { decisions: string[] };

@@ -18,14 +18,15 @@ import { getGitRoot, getHeadCommit, getWorkingTreeStatus } from '../../core/gits
 import { computeWorkingTreeFingerprint } from '../../core/fingerprint/hasher.js';
 import { normalizeCanonicalPath } from '../../config/paths.js';
 import { fuzzyFindRepo } from '../../core/registry/repoRegistry.js';
-import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES, hookStateDir, installClaudeHooks, runCheckpointHook, runSessionStartHook, uninstallClaudeHooks } from '../../integrations/claude-code/index.js';
+import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES, hookStateDir, installClaudeHooks, runCheckpointHook, runSessionStartHook, runHookSafely, uninstallClaudeHooks } from '../../integrations/claude-code/index.js';
+import { logHookFailure } from '../../hooks/claude.js';
 import { syncCodexInstructions, CODEX_GUIDELINES } from '../../integrations/codex/index.js';
 import { checkInstructions } from '../../integrations/instructions.js';
 import { getCacheDiagnostics, getCostSummary, listSessions } from '../../telemetry/analytics.js';
 import { getStats } from '../../telemetry/stats.js';
 import { ingestTranscripts } from '../../telemetry/transcripts.js';
 import { migrateDevPulse } from '../../migration/devpulse/migrator.js';
-import { openDatabase } from '../../storage/db.js';
+import { openDatabase, repairCorruptDatabase } from '../../storage/db.js';
 import { migrate } from '../../storage/migrator.js';
 import type Database from 'better-sqlite3';
 import { installMcpConfig, type Harness } from '../../integrations/mcpConfig.js';
@@ -151,13 +152,20 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   }
   if (group === 'doctor') {
     if (!existsSync(dbFile) && !args.includes('--repair')) fail('Weft is not initialized. Run `weft init` first.', 3);
-    const db = database(false);
-    try {
-      const integrity = db.prepare('PRAGMA integrity_check').pluck().get() as string;
-      const warnings = integrity === 'ok' ? [] : [`SQLite integrity check: ${integrity}`];
+    const preflight = await repairCorruptDatabase(paths.state, args.includes('--repair'));
+    if (preflight.integrity !== 'ok' && !preflight.backup && preflight.integrity !== 'missing') {
       const home = process.env.HOME ?? process.env.USERPROFILE ?? process.cwd();
       const integrations = await checkIntegrations(home);
-      const data = { node: process.version, database: integrity, repositories: allRepos(db).length, weftOnPath: commandOnPath('weft'), integrations };
+      return { code: 6, data: { node: process.version, database: preflight.integrity, repositories: null, weftOnPath: commandOnPath('weft'), integrations }, warnings: [`SQLite quick_check: ${preflight.integrity}`, 'Run `weft doctor --repair` to move the damaged database aside and create a fresh one.'] };
+    }
+    const db = database(false);
+    try {
+      const integrity = db.pragma('quick_check', { simple: true }) as string;
+      const warnings = integrity === 'ok' ? [] : [`SQLite quick_check: ${integrity}`];
+      const home = process.env.HOME ?? process.env.USERPROFILE ?? process.cwd();
+      const integrations = await checkIntegrations(home);
+      const hooksLog = await readFile(join(paths.state, 'hooks.log'), 'utf8').then(value => value.trim().slice(-500)).catch(() => '');
+      const data = { node: process.version, database: integrity, repairedFrom: preflight.backup ?? null, hookLog: hooksLog, repositories: allRepos(db).length, weftOnPath: commandOnPath('weft'), integrations };
       const lines = integrations.map((item) => `${item.id}: ${item.status}${item.detail ? ` (${item.detail})` : ''}${item.fix ? `; fix: ${item.fix}` : ''}`);
       if (compactOutput) return { code: warnings.length ? 6 : 0, data: lines.join('\n'), warnings };
       return { code: warnings.length ? 6 : 0, data, warnings };
@@ -187,9 +195,16 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     return { code: 0, data: result };
   }
   if (group === 'hook') {
-    if (sub === 'session-start') { await ensureRepoOnboarded(process.cwd()); const data = await runSessionStartHook({ stateDir: hookStateDir() }); return { code: 0, data: data || undefined }; }
-    if (sub === 'stop' || sub === 'pre-compact') { await runCheckpointHook({ stateDir: hookStateDir() }); return { code: 0, data: '' }; }
-    fail('Use `weft hook session-start|stop|pre-compact`.', 2);
+    try {
+      if (sub !== 'session-start' && sub !== 'stop' && sub !== 'pre-compact') { await logHookFailure(hookStateDir(), new Error(`Unknown hook event: ${sub ?? ''}`)); return { code: 0 }; }
+      const data = await runHookSafely(async () => {
+        if (sub === 'session-start') { await ensureRepoOnboarded(process.cwd()); return runSessionStartHook({ stateDir: hookStateDir() }); }
+        await runCheckpointHook({ stateDir: hookStateDir() });
+        return '';
+      }, 400);
+      if (data === undefined) await logHookFailure(hookStateDir(), new Error('Hook timed out'));
+      return { code: 0, data: data || undefined };
+    } catch (error) { await logHookFailure(hookStateDir(), error); return { code: 0 }; }
   }
   if (group === 'hooks') {
     const options = { projectRoot: process.cwd(), home: process.env.HOME ?? process.env.USERPROFILE, global: args.includes('--global'), dryRun: args.includes('--dry-run') };
@@ -367,11 +382,21 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   if (group === 'clean') {
     const db = database(); try {
       const scope = option(args, '--scope', 'indexes'); if (!['indexes', 'all'].includes(scope!)) fail('--scope must be indexes or all', 2);
-      const rows = db.prepare("SELECT id FROM index_generations WHERE status != 'ready' OR completed_at < datetime('now', '-7 days')").all() as Array<{ id: number }>;
+      const rows = db.prepare(`SELECT g.id FROM index_generations g LEFT JOIN repo_index_state s ON s.repo_id = g.repo_id
+        WHERE g.id != COALESCE(s.active_generation, -1) AND (g.status != 'ready' OR g.completed_at < datetime('now', '-7 days'))
+        AND g.id NOT IN (SELECT id FROM index_generations newer WHERE newer.repo_id = g.repo_id AND newer.status = 'ready' AND newer.id != COALESCE(s.active_generation, -1) ORDER BY newer.id DESC LIMIT 1)`).all() as Array<{ id: number }>;
+      const oldTelemetry = scope === 'all' ? (db.prepare("SELECT (SELECT COUNT(*) FROM tool_calls WHERE observed_at < datetime('now', '-90 days')) + (SELECT COUNT(*) FROM usage_events WHERE observed_at < datetime('now', '-90 days')) AS count").get() as { count: number }).count : 0;
       const dryRun = args.includes('--dry-run');
       if (!dryRun && !args.includes('--yes')) fail('Confirmation required; rerun with --yes.', 5);
-      if (!dryRun) { const del = db.prepare('DELETE FROM index_generations WHERE id = ?'); db.transaction(() => { for (const row of rows) del.run(row.id); })(); db.exec('VACUUM'); }
-      return { code: 0, data: { removed: dryRun ? 0 : rows.length, planned: rows.length, dryRun } };
+      if (!dryRun) {
+        const del = db.prepare('DELETE FROM index_generations WHERE id = ?');
+        db.transaction(() => {
+          for (const row of rows) del.run(row.id);
+          if (scope === 'all') { db.prepare("DELETE FROM tool_calls WHERE observed_at < datetime('now', '-90 days')").run(); db.prepare("DELETE FROM usage_events WHERE observed_at < datetime('now', '-90 days')").run(); }
+        })();
+        db.exec('VACUUM');
+      }
+      return { code: 0, data: { removed: dryRun ? 0 : rows.length + oldTelemetry, planned: rows.length + oldTelemetry, dryRun } };
     } finally { db.close(); }
   }
   if (group === 'migrate' && sub === 'devpulse') {
@@ -384,9 +409,12 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   fail(`Unknown command: ${group ?? ''}`, 2);
 }
 
+const VALUE_FLAGS = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite', '--harness', '--repo', '--tasks', '--repeat', '--task']);
+export const KNOWN_FLAGS = new Set([...VALUE_FLAGS, '--force', '--repair', '--dry-run', '--keep-data', '--interactive', '--yes', '--global', '--suggest', '--uninstall', '--portable']);
+
 function validateFlags(args: string[]): void {
-  const valueFlags = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite', '--harness', '--repo', '--tasks', '--repeat', '--task']);
-  const known = new Set([...valueFlags, '--force', '--repair', '--dry-run', '--keep-data', '--interactive', '--yes', '--global', '--suggest']);
+  const valueFlags = VALUE_FLAGS;
+  const known = KNOWN_FLAGS;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--') break;

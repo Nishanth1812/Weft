@@ -31,7 +31,7 @@ export function findMcpRepo(db: Database.Database, gitRoot: string) {
   const key = (path: string) => resolve(path).replace(/\\/g, '/').toLowerCase();
   return (db.prepare('SELECT id, root_path AS rootPath FROM repositories').all() as Array<{ id: string; rootPath: string }>).find((repo) => key(repo.rootPath) === key(gitRoot));
 }
-function requiredString(args: Args, name: string): string { const value = args[name]; if (typeof value !== 'string' || !value.trim()) throw new Error(`${name} is required`); return value; }
+function requiredString(args: Args, name: string): string { const value = args[name]; if (typeof value !== 'string' || !value.trim()) throw Object.assign(new Error(`${name} is required`), { code: -32602 }); return value; }
 const filesFor = (db: Database.Database, repoId: string, paths: string[]) => paths.length ? db.prepare(`SELECT id AS file_id FROM files WHERE repo_id = ? AND path IN (${paths.map(() => '?').join(',')})`).all(repoId, ...paths) as Array<{ file_id: number }> : [];
 
 export function createMcpHandler(db: Database.Database, repo: { id: string; rootPath: string } | null, options: { index?: typeof indexRepository } = {}) {
@@ -62,10 +62,21 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
     return refreshing;
   };
   return async (method: string, params: Args = {}): Promise<unknown> => {
-    if (method === 'initialize') return { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'weft', version: '0.1.0' } };
+    if (method === 'initialize') {
+      const requested = params.protocolVersion;
+      const supported = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
+      return { protocolVersion: typeof requested === 'string' && supported.includes(requested) ? requested : '2025-11-25', capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: 'weft', version: '0.1.0' } };
+    }
+    if (method === 'ping') return {};
+    if (method === 'notifications/initialized' || method.startsWith('notifications/')) return undefined;
     if (method === 'tools/list') return { tools: MCP_TOOLS };
-    if (method !== 'tools/call') throw new Error(`Method not found: ${method}`);
-    const name = requiredString(params, 'name'); const args = (params.arguments ?? {}) as Args;
+    if (method === 'resources/list' || method === 'resources/templates/list' || method === 'prompts/list') return { [method === 'prompts/list' ? 'prompts' : method === 'resources/list' ? 'resources' : 'resourceTemplates']: [] };
+    if (method !== 'tools/call') throw Object.assign(new Error(`Method not found: ${method}`), { code: -32601 });
+    if (!params || typeof params !== 'object' || Array.isArray(params)) throw Object.assign(new Error('Invalid params'), { code: -32602 });
+    const name = requiredString(params, 'name');
+    const args = (params.arguments ?? {}) as Args;
+    if (!args || typeof args !== 'object' || Array.isArray(args)) throw Object.assign(new Error('arguments must be an object'), { code: -32602 });
+    if (!MCP_TOOLS.some(tool => tool.name === name)) return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
     if (!repo) return { content: [{ type: 'text', text: 'Weft MCP tools need a Git repository. Start the harness from inside a Git workspace.' }], isError: false };
     const started = Date.now(); let text = ''; let baseline: number | null = null; let note = '';
     try {
@@ -73,12 +84,12 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
       let value: unknown;
       if (name === 'weft_search') {
         const query = requiredString(args, 'query'); const limit = Number(args.limit ?? 10);
-        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be 1–100');
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Object.assign(new Error('limit must be 1–100'), { code: -32602 });
         const rows = searchChunks(db, repo.id, query, limit); baseline = baselineTokensForChunks(db, repo.id, filesFor(db, repo.id, rows.map(row => row.path)));
         value = formatSearch(rows);
       } else if (name === 'weft_context') {
         const query = requiredString(args, 'query'); const budget = Number(args.budget ?? 1500);
-        if (!Number.isSafeInteger(budget) || budget < 1 || budget > 100_000) throw new Error('budget must be 1–100000');
+        if (!Number.isSafeInteger(budget) || budget < 1 || budget > 100_000) throw Object.assign(new Error('budget must be 1–100000'), { code: -32602 });
         const items = packContext(rankCandidates(searchChunks(db, repo.id, query, 100), query), budget, query).items;
         baseline = baselineTokensForChunks(db, repo.id, filesFor(db, repo.id, items.map(row => row.path)));
         value = formatContext(items);
@@ -123,7 +134,8 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
       return { content: [{ type: 'text', text }], isError: false };
     } catch (error) {
       try { recordToolCall(db, { repoId: repo.id, tool: name, returnedTokens: 0, baselineTokens: baseline, ms: Date.now() - started }); } catch { /* Telemetry must not interrupt tools. */ }
-      throw error;
+      if (Number((error as { code?: number }).code) === -32602) throw error;
+      return { content: [{ type: 'text', text: redactSafe(error instanceof Error ? error.message : String(error)) }], isError: true };
     }
   };
 }
@@ -133,10 +145,10 @@ export function serveMcp(db: Database.Database, repo: { id: string; rootPath: st
   let closed = false;
   const autoCheckpoint = async () => {
     if (closed || !repo) return; closed = true;
-    const task = db.prepare("SELECT id FROM tasks WHERE repo_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1").get(repo.id) as { id: string } | undefined;
-    if (!task) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const task = db.prepare("SELECT id FROM tasks WHERE repo_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1").get(repo.id) as { id: string } | undefined;
+      if (!task) return;
       await Promise.race([getWorkingTreeStatus(repo.rootPath).then(async git => {
         const head = await getHeadCommit(repo.rootPath) ?? '', fingerprint = computeWorkingTreeFingerprint(git, head, git.branch);
         const prev = db.prepare('SELECT working_tree_fingerprint AS fingerprint FROM checkpoints WHERE task_id = ? ORDER BY created_at DESC LIMIT 1').get(task.id) as { fingerprint: string } | undefined;
@@ -149,11 +161,30 @@ export function serveMcp(db: Database.Database, repo: { id: string; rootPath: st
   lines.once('close', autoCheckpoint);
   process.once('SIGINT', () => { void autoCheckpoint().finally(() => process.kill(process.pid, 'SIGINT')); });
   process.once('SIGTERM', () => { void autoCheckpoint().finally(() => process.kill(process.pid, 'SIGTERM')); });
-  lines.on('line', async (line) => {
-    let message: { id?: unknown; method?: string; params?: Args };
-    try { message = JSON.parse(line) as typeof message; } catch { return; }
-    if (!message.method || message.id === undefined) return;
-    try { streams.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: await handle(message.method, message.params) })}\n`); }
-    catch (error) { streams.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: redactSafe(error instanceof Error ? error.message : String(error)) } })}\n`); }
+  let queue = Promise.resolve();
+  const respond = (message: unknown) => streams.output.write(`${JSON.stringify(message)}\n`);
+  const processMessage = async (message: unknown): Promise<void> => {
+    if (Array.isArray(message)) { if (!message.length) { respond({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }); return; } await Promise.all(message.map(processMessage)); return; }
+    if (!message || typeof message !== 'object') { respond({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }); return; }
+    const request = message as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
+    const hasId = Object.hasOwn(request, 'id');
+    const id = request.id;
+    if (request.jsonrpc !== '2.0' || typeof request.method !== 'string' || (hasId && id !== null && typeof id !== 'string' && typeof id !== 'number') || (request.params !== undefined && (!request.params || typeof request.params !== 'object' || Array.isArray(request.params)))) {
+      if (hasId) respond({ jsonrpc: '2.0', id: id === null || typeof id === 'string' || typeof id === 'number' ? id : null, error: { code: -32600, message: 'Invalid Request' } });
+      return;
+    }
+    if (!hasId) { try { await handle(request.method, request.params as Args); } catch { /* Notifications never receive a response. */ } return; }
+    try {
+      const result = await handle(request.method, request.params as Args);
+      respond({ jsonrpc: '2.0', id, result: result ?? {} });
+    } catch (error) {
+      respond({ jsonrpc: '2.0', id, error: { code: Number((error as { code?: number }).code) || -32603, message: redactSafe(error instanceof Error ? error.message : String(error)) } });
+    }
+  };
+  lines.on('line', (line) => {
+    if (Buffer.byteLength(line, 'utf8') > 16 * 1024 * 1024) { respond({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Message too large' } }); return; }
+    let message: unknown;
+    try { message = JSON.parse(line); } catch { respond({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); return; }
+    queue = queue.then(() => processMessage(message)).catch(() => undefined);
   });
 }

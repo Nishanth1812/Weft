@@ -3,21 +3,27 @@
   "version": "0.1.0",
   "description": "Local-first developer efficiency layer for AI coding harnesses",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nishanth1812/Weft.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Nishanth1812/Weft/issues"
+  },
+  "homepage": "https://github.com/Nishanth1812/Weft#readme",
   "bin": {
     "weft": "./dist/cli/index.js"
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md", "SECURITY.md", "docs/ARCHITECTURE.md"],
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc",
     "watch": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src tests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "keywords": [
     "developer-tools",
@@ -38,7 +44,7 @@
     "eslint": "^10.13.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.71.2",
-    "vitest": "^3.0.5"
+    "vitest": "^5.0.5"
   },
   "engines": {
     "node": ">=20.0.0"

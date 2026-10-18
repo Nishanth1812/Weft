@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -35,5 +35,30 @@ describe('walkRepository', () => {
     const { mtimeMs } = await import('node:fs/promises').then(({ stat }) => stat(file));
     const files = await walkRepository(root, new Map([['same.ts', { mtimeMs: Math.round(mtimeMs), sizeBytes: size, hash: 'cached' }]]));
     expect(files[0]).toMatchObject({ content: '', contentHash: 'cached', unchanged: true });
+  });
+
+  it('skips binary and oversized files, handles BOM and unicode paths, and counts skips', async () => {
+    await writeFile(join(root, 'binary.dat'), Buffer.from([0, 1, 2]));
+    await writeFile(join(root, 'large.ts'), Buffer.alloc(2 * 1024 * 1024 + 1, 65));
+    await writeFile(join(root, 'café.ts'), '\uFEFFexport const café = 1;\r\n');
+    const warnings = { count: 0 };
+    const files = await walkRepository(root, new Map(), () => warnings.count++);
+    expect(files.map(file => file.path)).toContain('café.ts');
+    expect(files.find(file => file.path === 'café.ts')?.content).toMatch(/^export/);
+    expect(files.map(file => file.path)).not.toContain('binary.dat');
+    expect(files.map(file => file.path)).not.toContain('large.ts');
+    expect(warnings.count).toBe(2);
+  });
+
+  it('does not follow symlink loops and degrades when the registered root disappears', async () => {
+    await writeFile(join(root, 'safe.ts'), 'export const safe = true;');
+    try { await symlink(root, join(root, 'loop'), 'junction'); } catch { /* Symlink creation may be restricted by the host. */ }
+    expect((await walkRepository(root)).map(file => file.path)).toContain('safe.ts');
+    const gone = join(root, 'gone');
+    await mkdir(gone);
+    await rm(gone, { recursive: true });
+    const warnings = { count: 0 };
+    await expect(walkRepository(gone, new Map(), () => warnings.count++)).resolves.toEqual([]);
+    expect(warnings.count).toBe(1);
   });
 });

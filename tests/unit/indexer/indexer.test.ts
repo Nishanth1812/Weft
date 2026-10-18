@@ -9,8 +9,9 @@ import { searchChunks } from '../../../src/context/search.js';
 
 describe('indexRepository', () => {
   let root: string;
+  let state: string;
   let db: ReturnType<typeof openDatabase>;
-  afterEach(async () => { db?.close(); if (root) await rm(root, { recursive: true, force: true }); });
+  afterEach(async () => { db?.close(); if (root) await rm(root, { recursive: true, force: true }); if (state) await rm(state, { recursive: true, force: true }); });
 
   it('publishes an FTS-searchable generation atomically', async () => {
     root = await mkdtemp(join(tmpdir(), 'weft-indexer-'));
@@ -54,5 +55,20 @@ describe('indexRepository', () => {
 
     expect(next.files).toBe(0);
     expect(searchChunks(db, 'r', 'removedSearchTerm')).toEqual([]);
+  });
+
+  it('serializes concurrent index calls and leaves one consistent active generation', async () => {
+    root = await mkdtemp(join(tmpdir(), 'weft-index-lock-'));
+    state = await mkdtemp(join(tmpdir(), 'weft-index-lock-state-'));
+    db = openDatabase(state);
+    migrate(db);
+    db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', root, 'r', 'now', 'now');
+    await writeFile(join(root, 'one.ts'), 'export const oneUniqueTerm = 1;');
+    await writeFile(join(root, 'two.ts'), 'export const twoUniqueTerm = 2;');
+    const summaries = await Promise.all(Array.from({ length: 6 }, () => indexRepository(db, 'r', root)));
+    expect(new Set(summaries.map(summary => summary.generationId)).size).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM index_generations WHERE repo_id = 'r' AND status = 'ready'").get()).toEqual({ count: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM files WHERE generation_id = ?').get(summaries[0]!.generationId)).toEqual({ count: 2 });
+    expect(db.prepare('SELECT active_generation FROM repo_index_state WHERE repo_id = ?').get('r')).toEqual({ active_generation: summaries[0]!.generationId });
   });
 });

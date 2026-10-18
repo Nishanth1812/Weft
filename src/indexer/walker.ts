@@ -59,13 +59,14 @@ function ignored(path: string, rules: IgnoreRule[]): boolean {
   return excluded;
 }
 
-export async function walkRepository(repoRoot: string, previous: Map<string, PreviousFile> = new Map()): Promise<CandidateFile[]> {
+export async function walkRepository(repoRoot: string, previous: Map<string, PreviousFile> = new Map(), onWarning: () => void = () => undefined): Promise<CandidateFile[]> {
   const root = resolve(repoRoot);
   const files: CandidateFile[] = [];
   const visit = async (directory: string, inheritedRules: IgnoreRule[] = []): Promise<void> => {
     let rules = inheritedRules;
     try { rules = [...rules, ...compileRules((await readFile(join(directory, '.gitignore'), 'utf8')).split(/\r?\n/), relative(root, directory).split(sep).join('/'))]; } catch { /* no ignore file */ }
-    const entries = await readdir(directory, { withFileTypes: true });
+    let entries;
+    try { entries = await readdir(directory, { withFileTypes: true }); } catch { onWarning(); return; }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const absolute = join(directory, entry.name);
@@ -74,15 +75,19 @@ export async function walkRepository(repoRoot: string, previous: Map<string, Pre
       if (entry.isDirectory()) { await visit(absolute, rules); continue; }
       if (!entry.isFile()) continue;
       if (ignored(path, rules)) continue;
-      const metadata = await stat(absolute);
-      if (metadata.size > 2 * 1024 * 1024) continue;
+      let metadata;
+      try { metadata = await stat(absolute); } catch { onWarning(); continue; }
+      if (metadata.size > 2 * 1024 * 1024) { onWarning(); continue; }
       const cached = previous.get(path);
       if (cached && cached.mtimeMs === Math.round(metadata.mtimeMs) && cached.sizeBytes === metadata.size) {
         files.push({ path, content: '', contentHash: cached.hash, mtimeMs: metadata.mtimeMs, sizeBytes: metadata.size, language: languageByExtension[extname(path).toLowerCase()], unchanged: true });
         continue;
       }
-      const bytes = await readFile(absolute);
-      const source = bytes.toString('utf8');
+      let bytes: Buffer;
+      try { bytes = await readFile(absolute); } catch { onWarning(); continue; }
+      if (bytes.includes(0)) { onWarning(); continue; }
+      const source = bytes.toString('utf8').replace(/^\uFEFF/, '');
+      if (source.includes('\uFFFD')) { onWarning(); continue; }
       const contentHash = hashBytes(bytes);
       files.push({ path, content: containsSecret(source) ? redactSecrets(source) : source, contentHash, mtimeMs: metadata.mtimeMs, sizeBytes: metadata.size, language: languageByExtension[extname(path).toLowerCase()] });
     }

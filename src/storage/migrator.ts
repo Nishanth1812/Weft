@@ -103,9 +103,15 @@ export function migrate(db: Database.Database, now: () => string = () => new Dat
     ? db.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all() as { version: number; checksum: string }[]
     : [];
   const known = new Map(migrations.map((migration) => [migration.version, migration]));
+  const latestVersion = Math.max(...known.keys());
+  const newer = applied.find((row) => row.version > latestVersion);
+  if (newer) throw new Error(`Database schema version ${newer.version} is newer than this Weft supports (${latestVersion}); update Weft before using this database.`);
   for (const row of applied) {
     const migration = known.get(row.version);
-    if (!migration || checksum(migration.sql) !== row.checksum) {
+    if (!migration) {
+      throw new Error(`Database contains unknown migration version ${row.version}; this Weft version cannot safely use it.`);
+    }
+    if (checksum(migration.sql) !== row.checksum) {
       throw new Error(`Migration checksum mismatch for version ${row.version}`);
     }
   }

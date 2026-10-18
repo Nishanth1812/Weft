@@ -1,102 +1,39 @@
-# Weft — Local-First AI Coding Efficiency Layer
+# Weft
 
-> **Maximize correct, verified engineering work completed per unit of AI cost.**
+Weft is a local-first TypeScript CLI that indexes registered repositories, retrieves relevant code, and keeps task continuity data for supported coding harnesses. It stores its database, config, and cache on the local machine. It does not upload repository content or telemetry.
 
-Weft is a fast, local-first developer productivity layer engineered to run alongside modern AI coding agents (T3 Code, OpenCode, Codex, Claude Code). It operates with **zero external or local LLM calls in its core**—delivering deterministic speed, zero recurring API cost, and offline privacy.
+## Install
 
----
+After the package is published, install it once with `npm install --global weft`. From a source clone, run `npm link` at the repository root. Both provide the `weft` command; on Windows, reopen the terminal if npm's global bin directory is not on `PATH`.
 
-## Zero-touch setup
+Run `weft --help` for the CLI's short command summary and `weft doctor` to inspect integration setup. `weft init` initializes local storage. `weft setup` configures supported harness integrations found under the current user home; it does not create missing harness directories or edit project files. It adds Weft-managed hooks, MCP entries, and instruction blocks while preserving unrelated settings. `weft setup --uninstall` removes Weft-managed entries and instruction blocks from those same integrations.
 
-Run `weft setup` once to add Weft to existing Claude Code, Codex, and OpenCode user configurations and enable repository auto-onboarding. Use `--harness claude-code,codex,opencode` to select harnesses, or `--dry-run` to preview. Setup only touches harness config directories that already exist. It adds Claude Code hooks to `~/.claude/settings.json`, its user MCP server to top-level `mcpServers` in `~/.claude.json`, and managed instructions to `~/.claude/CLAUDE.md`; Codex gets `mcp_servers.weft` in `~/.codex/config.toml` and managed instructions in `~/.codex/AGENTS.md`; OpenCode gets `mcp.weft` in `~/.config/opencode/opencode.json` and managed instructions in `~/.config/opencode/AGENTS.md`. Existing unrelated settings and instruction text are preserved. Setup files are never written into repositories.
+## Commands
 
-New Git workspaces are registered when a Claude Code session starts or Weft MCP starts, then indexed without delaying the session hook. Repositories with more than 20,000 tracked files are registered but indexing is skipped with a note in `weft repos status`; change `maxTrackedFiles` in Weft's user config to adjust the limit. Use `weft auto off|on|status` to control onboarding. `weft setup --uninstall` removes Weft-managed harness entries and instruction blocks and turns auto-onboarding off; it keeps the harness config files and unrelated entries.
+The short list printed by `weft --help` is: `init`, `doctor`, `onboard`, `mcp`, `instructions`, `repos`, `index`, `search`, `context`, `task`, `intent`, `health`, `portfolio`, `costs` (also `stats`), `cache`, `sessions`, `bench`, `clean`, and `migrate devpulse`. The CLI also accepts `setup`, `auto on|off|status`, and `verify [--suggest|-- <command>]`, which are not currently shown in that help text. Several commands take subcommands; for example `weft bench retrieval`, `weft bench run`, `weft repos register`, and `weft task start`. Use `weft --help` for the global summary.
 
----
+## Local data and privacy
 
-## 🚀 Key Capabilities
+Weft's state is local. The normal CLI and MCP server do not upload it to a Weft service. A benchmark may invoke the external harness command you provide; that harness may communicate with its own service. On Windows Weft uses `%APPDATA%\weft` for config and instructions and `%LOCALAPPDATA%\weft\state` and `%LOCALAPPDATA%\weft\cache` for state and cache. On macOS and Linux it uses `$XDG_CONFIG_HOME/weft` (default `~/.config/weft`), `$XDG_STATE_HOME/weft` (default `~/.local/state/weft`), and `$XDG_CACHE_HOME/weft` (default `~/.cache/weft`). The state database contains repository paths, file metadata and indexed chunks, task/checkpoint data, and local usage records.
 
-1. **Instant Incremental Repository Indexing (`weft index`)**
-   - High-throughput file walker respecting `.gitignore` and sensitive paths (`.env*`, `.ssh/`, `*.pem`, etc.).
-   - Fast-path `mtime + size` caching reuses previously computed content hashes.
-   - Deterministic symbol extraction for TypeScript, JavaScript, Python, Go, Rust, Java, and C/C++.
-   - Line-bounded source text chunking automatically indexed into SQLite FTS5.
+`weft stats` refreshes local usage records by scanning JSONL transcript files under `~/.claude/projects` and `~/.codex/sessions` (or the equivalent user home on Windows), then reports data from the local database. It does not query a provider or cloud service. Transcript contents are parsed locally for usage information and recorded in the local database. Indexing and retrieval operate on local repository files and the local database.
 
-2. **Hard-Budget Context Packaging (`weft context`)**
-   - Combines 5 signals: normalized BM25 lexical rank, path/symbol exact/partial matches, symbol dependency proximity, test-to-implementation pairing, and intent matching.
-   - Enforces strict token budgets (e.g. 1024, 2048, 4096 tokens) with conservative estimators to prevent prompt blowups.
+Hooks run local checkpoint/session actions in Claude Code. MCP provides local tools such as safe file reads, search, context packing, task checkpointing, and repository health checks to supported harnesses. `weft setup` configures Claude Code, Codex, and OpenCode when their user config directories exist. The `t3` setup target covers Claude Code and Codex configurations.
 
-3. **Task Checkpoints & Staleness Detection (`weft task`)**
-   - Compact session memory capturing objective, confirmed findings, decisions, verification test results, and next actions.
-   - Automatically computes working-tree Git status fingerprints to warn agents when referenced files have drifted.
+## Benchmark
 
-4. **Security & Redaction Ingestion Boundary**
-   - Regex secret scanner covering AWS, GitHub PATs, GitLab, Slack, Stripe, JWTs, and connection strings.
-   - In-memory `PIIVault` for deterministic email, phone, and SSN masking/restoration.
+No live benchmark result has been recorded for this project yet. `weft bench retrieval` measures local retrieval; `weft bench run` can run a configured suite and harness. Do not interpret an absent result as a measured saving.
 
-5. **Multi-Harness Managed Instruction Sync (`weft instructions sync`)**
-   - Automatically injects and updates guidelines into `AGENTS.md` and `CLAUDE.md` using isolated marker tags without modifying custom user instructions.
+## Troubleshooting
 
----
+- Run `weft doctor` to see missing or stale integrations and suggested repair commands.
+- If hooks do not run, check that Claude Code is installed, run `weft setup --harness claude-code`, and restart the harness.
+- On Windows, verify npm's global bin directory is on `PATH`; reopen the shell after installing or linking.
+- If an integration invokes an old checkout or CLI path, run `weft setup` again to refresh the recorded path.
+- If the SQLite native module cannot load, use a supported Node.js version and reinstall the package so `better-sqlite3` can install its platform binary.
 
-## 🛠️ CLI Reference
+## Development
 
-```bash
-# Initialize directories and SQLite database
-weft init
+Weft runs on Node.js 20 or newer. Developing it (the test runner) needs Node.js 22.12 or newer: run `npm ci`, then `npm run build`, `npm run lint`, and `npm test`.
 
-# Verify runtime health and database integrity
-weft doctor
-
-# Register a Git repository
-weft repos register . --name my-project
-
-# Index the repository (sub-second on incremental runs)
-weft index my-project
-
-# Query the codebase with SQLite FTS5 lexical search
-weft search "authMiddleware" my-project
-
-# Package targeted context strictly under a token budget
-weft context "authMiddleware" --budget 2048 my-project
-
-# Start and checkpoint an engineering task
-weft task start "Refactor user authentication" my-project
-weft task resume <taskId> my-project
-
-# Synchronize agent instruction files (AGENTS.md, CLAUDE.md)
-weft instructions sync
-
-# Install or remove Claude Code lifecycle hooks
-weft hooks install [--dry-run] [--global]
-weft hooks uninstall [--global]
-```
-
-## Hooks
-
-Claude Code hooks add a compact repository and checkpoint summary at session start, then save Git-state checkpoints on stop and before compaction. Project settings are written to `.claude/settings.json`; pass `--global` to use the user settings file. `--dry-run` previews installation without writing. Hook failures are silent and never stop the agent.
-
-## Seeing your real usage
-
-Run `weft stats --since 7d` to ingest local Claude Code and Codex transcript usage and see token totals, estimated cost, Weft adoption, and returned-token estimates. `weft costs` and `weft sessions` include the same ingested sessions. Transcript parsing stores usage metadata and tool names only; prompt and response text are never saved. Costs depend on the models covered by Weft's local pricing table, and file baselines are available only for indexed files.
-
----
-
-## 📊 Economics & Savings Model
-
-## Measuring savings
-
-`weft bench retrieval` compares whole-file literal-search reading with Weft's default 1500-token compact context for each query in `tests/golden/queries.json`. The report shows per-query token estimates, expected-file coverage, and mean/median tokens and ratios. It measures retrieval cost only, not end-to-end task cost. Reports are written under the Weft user state directory (`benchmarks/`); use `--repo <name>` for a registered repository and `--json` for machine-readable output.
-
-`weft bench run --suite tests/benchmarks/suites/weft-core.json --harness 'claude -p "{prompt}" --output-format json' --repeat 3 --dry-run` prints the task × condition × repeat plan and estimated token ceiling without invoking a harness. To run the live measurement, add `--yes`:
-
-```sh
-weft bench run --suite tests/benchmarks/suites/weft-core.json --harness 'claude -p "{prompt}" --output-format json' --repeat 3 --yes
-```
-
-Each task runs in a temporary repository copy. Conditions A, B, and C measure the baseline harness, shared instructions, and Weft with MCP, lifecycle hooks, and a local index. The Markdown table reports pass rate, median cost per successful task, standard deviation of successful-task costs, and tokens used. Failed tasks are excluded from successful-task cost. Use `--json` for full machine-readable trial results and usage provenance; `--tasks id1,id2` selects a subset and `--repeat n` controls repetitions. Costs and token usage are provider-reported when available; estimated token usage is labeled `estimated`. No live result has been recorded yet.
-
-$$\text{Efficiency Score} = \frac{\text{Verified Tasks Completed}}{\text{Total Token Cost (\$) + Latency Overhead (Hours)}}$$
-
-- **Input Token Reduction:** Replacing raw whole-file dumping with budget-packed chunks typically reduces agent context ingestion from 15k–30k tokens down to 2k–4k tokens (**70–85% token reduction**).
-- **Session Continuity:** Resuming tasks from compact checkpoints prevents re-reading full conversational history across sessions.
+See [Architecture](docs/ARCHITECTURE.md), [Security](SECURITY.md), and [Changelog](CHANGELOG.md).

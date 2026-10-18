@@ -27,11 +27,40 @@ const call = (handle: ReturnType<typeof createMcpHandler>, name: string, args: R
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('MCP server', () => {
+  it('speaks JSON-RPC for notifications, discovery, batches, ids, parse errors and invalid requests', async () => {
+    const { db, repoId, rootPath } = await fixture();
+    const input = new PassThrough(), output = new PassThrough();
+    const lines: string[] = [];
+    output.setEncoding('utf8').on('data', (part: string) => lines.push(...part.split('\n').filter(Boolean)));
+    try {
+      serveMcp(db, { id: repoId, rootPath }, { input, output });
+      input.write('{bad json}\n');
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 'init', params: { protocolVersion: '2025-06-18' } })}\n`);
+      input.write(`${JSON.stringify([{ jsonrpc: '2.0', method: 'ping', id: 0 }, { jsonrpc: '2.0', method: 'resources/list', id: 2 }, { jsonrpc: '2.0', method: 'prompts/list', id: 'p' }])}\n`);
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', id: 'bad', params: { name: 'weft_search', arguments: { limit: -1 } } })}\n`);
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'nope', id: 'missing' })}\n`);
+      input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', id: 'unknown', params: { name: 'unknown_tool' } })}\n`);
+      const deadline = Date.now() + 3000;
+      while (lines.length < 7 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+      const messages = lines.map(line => JSON.parse(line));
+      expect(messages[0]).toMatchObject({ id: null, error: { code: -32700 } });
+      expect(messages.find((message: { id: string }) => message.id === 'init').result.protocolVersion).toBe('2025-06-18');
+      expect(messages.find((message: { id: number }) => message.id === 0).result).toEqual({});
+      expect(messages.find((message: { id: number }) => message.id === 2).result.resources).toEqual([]);
+      expect(messages.find((message: { id: string }) => message.id === 'p').result.prompts).toEqual([]);
+      expect(messages.find((message: { id: string }) => message.id === 'bad').error.code).toBe(-32602);
+      expect(messages.find((message: { id: string }) => message.id === 'missing').error.code).toBe(-32601);
+      expect(messages.find((message: { id: string }) => message.id === 'unknown').result.isError).toBe(true);
+      input.end();
+    } finally { input.destroy(); output.destroy(); db.close(); }
+  });
+
   it('advertises six tools and initializes', async () => {
     const { db, repoId, rootPath } = await fixture();
     try {
       const handle = createMcpHandler(db, { id: repoId, rootPath });
-      expect((await handle('initialize') as { capabilities: unknown }).capabilities).toEqual({ tools: {} });
+      expect((await handle('initialize') as { capabilities: unknown }).capabilities).toEqual({ tools: {}, resources: {}, prompts: {} });
       expect((await handle('tools/list') as { tools: unknown[] }).tools).toHaveLength(6);
     } finally { db.close(); }
   });
@@ -60,10 +89,10 @@ describe('MCP server', () => {
       const handle = createMcpHandler(db, { id: repoId, rootPath });
       const result = await call(handle, 'weft_read', { path: 'sample.ts', startLine: 3, endLine: 3 });
       expect(JSON.stringify(result)).toContain('second line'); expect(JSON.stringify(result)).not.toContain('third line');
-      await expect(call(handle, 'weft_read', { path: '../outside-secret.ts', startLine: 1, endLine: 1 })).rejects.toThrow();
-      await expect(call(handle, 'weft_read', { path: outside, startLine: 1, endLine: 1 })).rejects.toThrow();
-      await expect(call(handle, 'weft_read', { path: 'external/secret.ts', startLine: 1, endLine: 1 })).rejects.toThrow('Path must be inside');
-      await expect(call(handle, 'weft_read', { path: '.env', startLine: 1, endLine: 1 })).rejects.toThrow('Sensitive');
+      await expect(call(handle, 'weft_read', { path: '../outside-secret.ts', startLine: 1, endLine: 1 })).resolves.toMatchObject({ isError: true });
+      await expect(call(handle, 'weft_read', { path: outside, startLine: 1, endLine: 1 })).resolves.toMatchObject({ isError: true });
+      await expect(call(handle, 'weft_read', { path: 'external/secret.ts', startLine: 1, endLine: 1 })).resolves.toMatchObject({ isError: true });
+      await expect(call(handle, 'weft_read', { path: '.env', startLine: 1, endLine: 1 })).resolves.toMatchObject({ isError: true });
     } finally { db.close(); await rm(outside, { force: true }); }
   });
 

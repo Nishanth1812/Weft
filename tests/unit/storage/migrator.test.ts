@@ -28,4 +28,14 @@ describe('migrate', () => {
       db.close();
     }
   });
+
+  it('refuses a database created by a newer Weft version before running changes', () => {
+    const db = openDatabase(':memory:');
+    try {
+      migrate(db);
+      db.prepare('INSERT INTO schema_migrations (version, applied_at, checksum) VALUES (?, ?, ?)').run(3, 'now', 'future');
+      expect(() => migrate(db)).toThrow(/newer than this Weft supports/);
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get()).toBeTruthy();
+    } finally { db.close(); }
+  });
 });

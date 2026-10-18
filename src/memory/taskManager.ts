@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { VerificationRecord } from '../verification/runner.js';
+import { redactDeep } from '../core/security/redactor.js';
 
 export interface Task {
   id: string; repoId: string; title: string; status: 'active' | 'blocked' | 'complete'; createdAt: string; updatedAt: string;
@@ -45,7 +46,7 @@ export function createTask(db: Database.Database, repoId: string, title: string)
 export function saveCheckpoint(db: Database.Database, input: CheckpointInput): Checkpoint {
   const previous = input.verificationRecords ? undefined : db.prepare('SELECT payload_json AS payloadJson FROM checkpoints WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(input.taskId) as { payloadJson: string } | undefined;
   const existing = previous ? (JSON.parse(previous.payloadJson) as CheckpointInput).verificationRecords : undefined;
-  const payload = { ...input, verificationRecords: [...(input.verificationRecords ?? existing ?? [])].slice(-5) };
+  const payload = redactDeep({ ...input, verificationRecords: [...(input.verificationRecords ?? existing ?? [])].slice(-5) });
   const checkpoint: Checkpoint = { ...payload, id: randomUUID(), schemaVersion: 1, createdAt: now() };
   db.transaction(() => {
     db.prepare(`INSERT INTO checkpoints (id, task_id, schema_version, revision, working_tree_fingerprint, payload_json, created_at)

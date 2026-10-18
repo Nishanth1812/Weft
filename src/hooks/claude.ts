@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -109,7 +109,7 @@ export async function runSessionStartHook(options: { cwd?: string; stateDir: str
       lines.push('Weft tools: weft_* MCP tools and `weft context` are available.');
       let output = lines.join('\n');
       while (estimateTokens(output) > 400) { output = lines.slice(0, -1).join('\n') + '\n' + lines.at(-1); if (lines.length <= 1) break; lines.splice(1, 1); }
-      return output;
+      return redactSafe(output);
     } finally { db.close(); }
   }, 430).catch(() => undefined);
   return typeof result === 'string' ? result : '';
@@ -137,8 +137,22 @@ export async function runCheckpointHook(options: { cwd?: string; stateDir: strin
         const details = redactSafe(JSON.stringify({ branch: status.branch, changedFiles, lastCommit: headId }));
         saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: fingerprint, revision: headId, objective: '', status: 'active', findings: [], decisions: [details], verification: verification ? [{ command: verification.command, result: verification.exitCode === 0 ? 'passed' : `failed (exit ${verification.exitCode})`, at: verification.ranAt }] : [], nextAction: '' });
       } finally { db.close(); }
-    } catch { /* Hooks must never interrupt the agent. */ }
+    } catch (error) { await logHookFailure(options.stateDir, error); }
   }, 430);
+}
+
+export async function logHookFailure(stateDir: string, error: unknown): Promise<void> {
+  try {
+    await mkdir(stateDir, { recursive: true });
+    const path = join(stateDir, 'hooks.log');
+    const line = `${new Date().toISOString()} ${redactSafe(error instanceof Error ? error.message : String(error)).replace(/[\r\n]+/g, ' ')}\n`;
+    const size = await stat(path).then(info => info.size, () => 0);
+    if (size + Buffer.byteLength(line) > 200 * 1024) {
+      await rename(path, `${path}.1`).catch(() => undefined);
+      await writeFile(`${path}.1`, (await readFile(`${path}.1`).catch(() => Buffer.alloc(0))).subarray(-100 * 1024));
+    }
+    await appendFile(path, line, 'utf8');
+  } catch { /* Hook diagnostics must never interrupt the host session. */ }
 }
 
 type Settings = { hooks?: Partial<Record<Event, Array<{ matcher?: string; hooks?: Array<Record<string, unknown>> }>>>; [key: string]: unknown };

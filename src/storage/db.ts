@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,4 +24,17 @@ export function openDatabase(stateDir: string = defaultStateDir()): Database.Dat
     db.close();
     throw error;
   }
+}
+
+export async function repairCorruptDatabase(stateDir: string, repair = true): Promise<{ integrity: string; backup?: string }> {
+  const path = join(stateDir, 'weft.db');
+  if (!existsSync(path)) return { integrity: 'missing' };
+  let integrity = 'unreadable';
+  try { const db = new Database(path, { readonly: true, fileMustExist: true }); try { integrity = db.pragma('quick_check', { simple: true }) as string; } finally { db.close(); } } catch { /* Treat an unreadable database as corrupt. */ }
+  if (integrity === 'ok' || !repair) return { integrity };
+  const backup = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  await rename(path, backup);
+  await rename(`${path}-wal`, `${backup}-wal`).catch(() => undefined);
+  await rename(`${path}-shm`, `${backup}-shm`).catch(() => undefined);
+  return { integrity, backup };
 }
