@@ -64,6 +64,7 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
   };
   return async (method: string, params: Args = {}): Promise<unknown> => {
     if (method === 'initialize') {
+      void refresh().catch(() => undefined); // Warm the index now so the first tool call does not pay for it.
       const requested = params.protocolVersion;
       const supported = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
       return { protocolVersion: typeof requested === 'string' && supported.includes(requested) ? requested : '2025-11-25', capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: 'weft', version: '0.1.0' } };

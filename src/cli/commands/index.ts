@@ -18,8 +18,8 @@ import { getGitRoot, getHeadCommit, getWorkingTreeStatus } from '../../core/gits
 import { computeWorkingTreeFingerprint } from '../../core/fingerprint/hasher.js';
 import { normalizeCanonicalPath } from '../../config/paths.js';
 import { fuzzyFindRepo } from '../../core/registry/repoRegistry.js';
-import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES, hookStateDir, installClaudeHooks, runCheckpointHook, runSessionStartHook, runHookSafely, uninstallClaudeHooks } from '../../integrations/claude-code/index.js';
-import { logHookFailure } from '../../hooks/claude.js';
+import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES, installClaudeHooks, uninstallClaudeHooks } from '../../integrations/claude-code/index.js';
+import { runHookCommand } from '../hookCommand.js';
 import { syncCodexInstructions, CODEX_GUIDELINES } from '../../integrations/codex/index.js';
 import { checkInstructions } from '../../integrations/instructions.js';
 import { getCacheDiagnostics, getCostSummary, listSessions } from '../../telemetry/analytics.js';
@@ -194,18 +194,7 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     const result = await installMcpConfig(harness, { home, project: harness === 't3' ? undefined : process.cwd(), dryRun: args.includes('--dry-run') });
     return { code: 0, data: result };
   }
-  if (group === 'hook') {
-    try {
-      if (sub !== 'session-start' && sub !== 'stop' && sub !== 'pre-compact') { await logHookFailure(hookStateDir(), new Error(`Unknown hook event: ${sub ?? ''}`)); return { code: 0 }; }
-      const data = await runHookSafely(async () => {
-        if (sub === 'session-start') { await ensureRepoOnboarded(process.cwd()); return runSessionStartHook({ stateDir: hookStateDir() }); }
-        await runCheckpointHook({ stateDir: hookStateDir() });
-        return '';
-      }, 400);
-      if (data === undefined) await logHookFailure(hookStateDir(), new Error('Hook timed out'));
-      return { code: 0, data: data || undefined };
-    } catch (error) { await logHookFailure(hookStateDir(), error); return { code: 0 }; }
-  }
+  if (group === 'hook') return runHookCommand(sub);
   if (group === 'hooks') {
     const options = { projectRoot: process.cwd(), home: process.env.HOME ?? process.env.USERPROFILE, global: args.includes('--global'), dryRun: args.includes('--dry-run') };
     // Calling node on the real CLI path skips the npm shim (~270ms per hook on Windows); --portable keeps plain `weft`.

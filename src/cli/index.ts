@@ -2,7 +2,6 @@
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runCommand } from './commands/index.js';
 import { formatContext, formatSearch } from './format.js';
 import { redactDeep, redactSafe } from '../core/security/redactor.js';
 
@@ -46,8 +45,9 @@ export async function runCli(argv = process.argv.slice(2), io: CliIo = { stdout:
   let result: CliResult;
   if (args.includes('--version') || args[0] === '--version') result = { code: 0, data: { version: '0.1.0' } };
   else if (args.includes('--help') || args.length === 0 || args[0] === 'help') result = { code: 0, data: HELP };
+  else if (args[0] === 'hook') result = await (await import('./hookCommand.js')).runHookCommand(args[1]);
   else {
-    try { result = await runCommand(args, !parsed.json); }
+    try { result = await (await import('./commands/index.js')).runCommand(args, !parsed.json); }
     catch (error) {
       const message = redactSafe(parsed.verbose && error instanceof Error ? error.stack ?? error.message : error instanceof Error ? error.message : String(error));
       const explicitCode = Number((error as { exitCode?: number }).exitCode);

@@ -24,7 +24,8 @@ async function fixture() {
 }
 const call = (handle: ReturnType<typeof createMcpHandler>, name: string, args: Record<string, unknown> = {}) => handle('tools/call', { name, arguments: args });
 
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+// initialize starts a background index; give it time to release the folder on Windows.
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))); });
 
 describe('MCP server', () => {
   it('speaks JSON-RPC for notifications, discovery, batches, ids, parse errors and invalid requests', async () => {
