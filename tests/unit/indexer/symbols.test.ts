@@ -9,4 +9,8 @@ describe('extractSymbols', () => {
     expect(extractSymbols('def run():\n    pass\n\nclass Worker:', 'x.py').map(({ name, kind }) => [name, kind])).toEqual([['run', 'function'], ['Worker', 'class']]);
     expect(extractSymbols('func Run() {}\ntype Worker struct {}', 'x.go').map(({ name, kind }) => [name, kind])).toEqual([['Run', 'function'], ['Worker', 'type']]);
   });
+  it('does not report control flow keywords as symbols', () => {
+    const source = 'function run() {\n if (ok) { work(); }\n for (const x of xs) { use(x); }\n while (pending) { wait(); }\n switch (kind) { case 1: break; }\n try { work(); } catch (error) { fail(error); }\n}';
+    expect(extractSymbols(source, 'x.ts').map(({ name }) => name)).toEqual(['run']);
+  });
 });

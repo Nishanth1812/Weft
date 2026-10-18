@@ -2,6 +2,7 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runCommand } from './commands/index.js';
+import { formatContext, formatSearch } from './format.js';
 
 export interface CliIo { stdout: (text: string) => void; stderr: (text: string) => void }
 export interface CliResult { code: number; data?: unknown; warnings?: string[]; errors?: string[]; status?: string }
@@ -10,7 +11,7 @@ const HELP = `ctx — local-first developer efficiency tools
 
 Usage: ctx <command> [options]
 
-Commands: init, doctor, instructions, repos, index, search, context, task,
+Commands: init, doctor, onboard, mcp, instructions, repos, index, search, context, task,
           intent, health, portfolio, costs (stats), cache, sessions, bench,
           clean, migrate devpulse
 
@@ -31,7 +32,7 @@ function commandName(args: string[]): string {
   if (args.includes('--version')) return 'version';
   if (args.includes('--help') || args.length === 0 || args[0] === 'help') return 'help';
   const group = args.find((arg) => !arg.startsWith('--')) ?? 'help';
-  const subcommands = new Set(['instructions', 'repos', 'task', 'intent', 'migrate', 'bench']);
+  const subcommands = new Set(['instructions', 'repos', 'task', 'intent', 'migrate', 'bench', 'mcp']);
   if (subcommands.has(group)) return `${group} ${args.slice(args.indexOf(group) + 1).find((arg) => !arg.startsWith('--')) ?? ''}`.trim();
   return group === 'stats' ? 'costs' : group;
 }
@@ -44,7 +45,7 @@ export async function runCli(argv = process.argv.slice(2), io: CliIo = { stdout:
   if (args.includes('--version') || args[0] === '--version') result = { code: 0, data: { version: '0.1.0' } };
   else if (args.includes('--help') || args.length === 0 || args[0] === 'help') result = { code: 0, data: HELP };
   else {
-    try { result = await runCommand(args); }
+    try { result = await runCommand(args, !parsed.json); }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const explicitCode = Number((error as { exitCode?: number }).exitCode);
@@ -60,6 +61,8 @@ export async function runCli(argv = process.argv.slice(2), io: CliIo = { stdout:
     for (const error of result.errors ?? []) io.stderr(`Error: ${error}\n`);
   } else if (!parsed.quiet) {
     if (typeof result.data === 'string') io.stdout(`${result.data}\n`);
+    else if (command === 'search' && Array.isArray(result.data)) io.stdout(`${formatSearch(result.data)}\n`);
+    else if (command === 'context' && result.data && typeof result.data === 'object' && 'items' in result.data) io.stdout(`${formatContext((result.data as { items: Parameters<typeof formatContext>[0] }).items)}\n`);
     else if (result.data !== undefined) io.stdout(`${JSON.stringify(result.data, null, 2)}\n`);
     for (const warning of result.warnings ?? []) io.stderr(`Warning: ${warning}\n`);
   }

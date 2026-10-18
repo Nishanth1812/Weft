@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { basename, join, resolve } from 'node:path';
+import { basename, delimiter, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getUserPaths } from '../../config/paths.js';
 import { loadConfig, saveConfig } from '../../config/manager.js';
@@ -25,6 +25,8 @@ import { migrateDevPulse } from '../../migration/devpulse/migrator.js';
 import { openDatabase } from '../../storage/db.js';
 import { migrate } from '../../storage/migrator.js';
 import type Database from 'better-sqlite3';
+import { installMcpConfig, type Harness } from '../../integrations/mcpConfig.js';
+import { serveMcp } from '../../mcp/server.js';
 
 type Result = { code: number; data?: unknown; warnings?: string[]; errors?: string[]; status?: string };
 class CommandError extends Error { constructor(message: string, readonly exitCode: number) { super(message); } }
@@ -64,8 +66,10 @@ function requireCount(value: string | undefined, label: string, fallback: number
 function repoRow(db: Database.Database, query?: string): { id: string; root_path: string; display_name: string } {
   const root = process.cwd();
   const rows = db.prepare('SELECT id, root_path, display_name FROM repositories ORDER BY display_name').all() as Array<{ id: string; root_path: string; display_name: string }>;
-  const match = query ? rows.find((row) => row.id === query || row.display_name.toLowerCase() === query.toLowerCase() || row.root_path.toLowerCase() === resolve(query).toLowerCase())
-    : rows.find((row) => row.root_path.toLowerCase() === root.toLowerCase());
+  const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+  const same = (a: string, b: string) => norm(a) === norm(b);
+  const match = query ? rows.find((row) => row.id === query || row.display_name.toLowerCase() === query.toLowerCase() || same(row.root_path, resolve(query)))
+    : rows.find((row) => same(row.root_path, root));
   if (match) return match;
   if (!query && !rows.length) fail('No repositories are registered. Run `ctx repos register` first.', 3);
   if (!query) fail(`Current directory is not registered: ${root}`, 3);
@@ -81,8 +85,13 @@ function duration(value: string | undefined): string | undefined {
   const factors: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
   return new Date(Date.now() - Number(match[1]) * factors[match[2]!.toLowerCase()]!).toISOString();
 }
+function isHarness(value: string | undefined): value is Harness { return ['claude-code', 'codex', 'opencode', 't3'].includes(value ?? ''); }
+function commandOnPath(name: string): boolean {
+  const extensions = process.platform === 'win32' ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';') : [''];
+  return (process.env.PATH ?? '').split(delimiter).some((dir) => extensions.some((extension) => existsSync(join(dir, `${name}${extension}`))));
+}
 
-export async function runCommand(args: string[]): Promise<Result> {
+export async function runCommand(args: string[], compactOutput = false): Promise<Result> {
   const [group, sub, ...rest] = args;
   validateFlags(args);
   if (group === 'init') {
@@ -99,9 +108,34 @@ export async function runCommand(args: string[]): Promise<Result> {
     try {
       const integrity = db.prepare('PRAGMA integrity_check').pluck().get() as string;
       const warnings = integrity === 'ok' ? [] : [`SQLite integrity check: ${integrity}`];
-      const data = { node: process.version, database: integrity, repositories: allRepos(db).length };
+      const data = { node: process.version, database: integrity, repositories: allRepos(db).length, ctxOnPath: commandOnPath('ctx') };
       return { code: warnings.length ? 6 : 0, data, warnings };
     } finally { db.close(); }
+  }
+  if (group === 'mcp' && sub === 'serve') {
+    const db = database(); const repo = repoRow(db);
+    serveMcp(db, { id: repo.id, rootPath: repo.root_path });
+    return await new Promise<Result>(() => {});
+  }
+  if (group === 'mcp' && sub === 'install') {
+    const harness = option(rest, '--harness');
+    if (!isHarness(harness)) fail('--harness must be claude-code, codex, opencode, or t3', 2);
+    const result = await installMcpConfig(harness, { home: process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(), project: process.cwd(), dryRun: args.includes('--dry-run') });
+    return { code: 0, data: result };
+  }
+  if (group === 'onboard') {
+    const target = positional(args.slice(1))[0] ?? process.cwd();
+    const harnesses = (option(args, '--harness', 'claude-code') ?? 'claude-code').split(',');
+    if (harnesses.some((value) => !isHarness(value))) fail('--harness must be claude-code, codex, opencode, or t3 (comma-separated)', 2);
+    const registered = await runCommand(['repos', 'register', target]);
+    const repo = registered.data as { id: string };
+    const indexed = await runCommand(['index', repo.id]);
+    const root = await getGitRoot(target); if (!root) fail(`Not a Git repository: ${target}`, 3);
+    const instructions = await Promise.all([
+      syncClaudeInstructions(root, CLAUDE_CODE_GUIDELINES), syncCodexInstructions(root, CODEX_GUIDELINES),
+    ]);
+    const installed = await Promise.all(harnesses.map((value) => installMcpConfig(value as Harness, { home: process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(), project: root })));
+    return { code: 0, data: { registered: registered.data, indexed: indexed.data, instructions, installed } };
   }
   if (group === 'instructions') {
     const action = sub;
@@ -159,9 +193,13 @@ export async function runCommand(args: string[]): Promise<Result> {
       const query = values.filter((_value, index) => index !== repoIndex).join(' ');
       if (!query) fail(`Usage: ctx ${group} <query> [repo]`, 2);
       const repo = repoRow(db, repoArg);
-      if (group === 'search') return { code: 0, data: searchChunks(db, repo.id, query, requireCount(option(args, '--limit'), '--limit', 20)) };
+      if (group === 'search') {
+        const hits = searchChunks(db, repo.id, query, requireCount(option(args, '--limit'), '--limit', 20));
+        return { code: 0, data: compactOutput ? rankCandidates(hits, query) : hits };
+      }
       const results = rankCandidates(searchChunks(db, repo.id, query, 100), query);
-      return { code: 0, data: packContext(results, requireCount(option(args, '--budget'), '--budget', 2048), query) };
+      const contextHits = compactOutput ? results.filter((hit, index) => results.findIndex(other => other.path === hit.path) === index).slice(0, 2) : results;
+      return { code: 0, data: packContext(contextHits, requireCount(option(args, '--budget'), '--budget', 1500), query) };
     } finally { db.close(); }
   }
   if (group === 'task') {
@@ -227,7 +265,7 @@ export async function runCommand(args: string[]): Promise<Result> {
 }
 
 function validateFlags(args: string[]): void {
-  const valueFlags = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite']);
+  const valueFlags = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite', '--harness']);
   const known = new Set([...valueFlags, '--force', '--repair', '--dry-run', '--keep-data', '--interactive', '--yes']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;

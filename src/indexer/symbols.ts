@@ -53,10 +53,11 @@ export function extractSymbols(source: string, pathOrLanguage: string): CodeSymb
   if (!patterns) return [];
   const lines = source.split(/\r?\n/);
   const found: CodeSymbol[] = [];
+  const keywords = new Set(['if', 'else', 'catch', 'for', 'while', 'switch', 'case', 'do', 'try', 'return', 'throw', 'new', 'delete', 'typeof', 'instanceof', 'in', 'of', 'await', 'yield', 'with', 'super']);
   for (let index = 0; index < lines.length; index++) {
     for (const rule of patterns) {
       const match = lines[index]!.match(rule.regex);
-      if (match?.[1]) { found.push({ name: match[1], kind: rule.kind, startLine: index + 1, endLine: endLine(lines, index + 1, language === 'py' ? 'python' : language) }); break; }
+      if (match?.[1] && !keywords.has(match[1])) { found.push({ name: match[1], kind: rule.kind, startLine: index + 1, endLine: endLine(lines, index + 1, language === 'py' ? 'python' : language) }); break; }
     }
   }
   return found;

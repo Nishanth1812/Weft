@@ -17,4 +17,8 @@ describe('packContext', () => {
     expect(packContext(input, 20, 'q').items.map(item => item.path)).toEqual(['a.ts', 'z.ts']);
     expect(input[0]!.path).toBe('z.ts');
   });
+  it('drops overlapping chunks from the same file', () => {
+    const result = packContext([chunk('src/a.ts', 'first'), { ...chunk('src/a.ts', 'overlap', 0.9), startLine: 1, endLine: 2 }, { ...chunk('src/a.ts', 'later', 0.8), startLine: 3, endLine: 4 }], 100);
+    expect(result.items.map(item => item.safeText)).toEqual(['first', 'later']);
+  });
 });

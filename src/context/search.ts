@@ -23,10 +23,12 @@ export function searchChunks(db: Database.Database, repoId: string, query: strin
   `).all(match, repoId, Math.floor(limit)) as Array<{
     path: string; startLine: number; endLine: number; safeText: string; rank: number; symbolNames: string; graphProximity: number;
   }>;
+  const bestRank = Math.min(...rows.map(row => row.rank));
+  const worstRank = Math.max(...rows.map(row => row.rank));
   return rows.map(({ rank, symbolNames, ...row }) => ({
     ...row,
     symbols: symbolNames ? symbolNames.split(String.fromCharCode(31)) : [],
     graphProximity: row.graphProximity,
-    normalizedBM25: 1 / (1 + Math.max(0, rank)),
+    normalizedBM25: worstRank === bestRank ? 1 : (worstRank - rank) / (worstRank - bestRank),
   }));
 }

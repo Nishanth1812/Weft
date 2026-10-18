@@ -19,8 +19,17 @@ describe('rankCandidates', () => {
       candidate('tests/widget.test.ts'),
       candidate('intent.md', { safeText: 'find widget integration objective', normalizedBM25: 0.2 }),
     ], 'find widget');
-    expect(results.find(item => item.path === 'src/widget.ts')!.score).toBeCloseTo(0.45 * 0.8 + 0.2 + 0.15 + 0.1);
-    expect(results.find(item => item.path === 'tests/widget.test.ts')!.score).toBeCloseTo(0.45 * 0.8 + 0.2 + 0.1);
+    expect(results.find(item => item.path === 'src/widget.ts')!.score).toBeCloseTo(0.45 * 0.8 + 0.15 + 0.10);
+    expect(results.find(item => item.path === 'tests/widget.test.ts')!.score).toBeCloseTo(0.45 * 0.8 + 0.15 - 0.35);
     expect(results.find(item => item.path === 'intent.md')!.score).toBeCloseTo(0.45 * 0.2 + 0.1);
+  });
+  it('boosts matching symbols and paths while penalizing tests unless requested', () => {
+    const ranked = rankCandidates([
+      candidate('tests/unit/integrations/instructions.test.ts', { normalizedBM25: 1 }),
+      candidate('src/integrations/instructions.ts', { symbols: ['syncInstructions'], normalizedBM25: 0.8 }),
+    ], 'instructions sync managed block');
+    expect(ranked[0]!.path).toBe('src/integrations/instructions.ts');
+    const requested = rankCandidates([candidate('tests/a.test.ts'), candidate('src/a.ts')], 'test a');
+    expect(requested.find(item => item.path === 'tests/a.test.ts')!.score).toBeCloseTo(0.45 * 0.8 + 0.15);
   });
 });
