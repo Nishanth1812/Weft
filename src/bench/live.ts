@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { estimateTokens } from '../core/estimate/tokenEstimator.js';
 import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES } from '../integrations/claude-code/index.js';
 import { installMcpConfig } from '../integrations/mcpConfig.js';
+import { installClaudeHooks, uninstallClaudeHooks } from '../hooks/claude.js';
 import { openDatabase } from '../storage/db.js';
 import { migrate } from '../storage/migrator.js';
 import { indexRepository } from '../indexer/indexer.js';
@@ -12,6 +13,7 @@ import { runBenchmark } from './runner.js';
 import type { TaskDefinition, TrialCondition } from './types.js';
 
 async function removeWeftSetup(repo: string): Promise<void> {
+  await uninstallClaudeHooks({ projectRoot: repo });
   for (const name of ['CLAUDE.md', 'AGENTS.md']) {
     const path = join(repo, name);
     let content: string;
@@ -31,7 +33,8 @@ async function removeWeftSetup(repo: string): Promise<void> {
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
 }
 
-type SuiteTask = TaskDefinition & { prompt: string };
+export interface SuitePatch { path: string; from: string; to: string }
+export type SuiteTask = TaskDefinition & { prompt: string; setup?: SuitePatch[]; solution?: SuitePatch[]; estimatedTokens?: number };
 function execute(command: string, cwd: string, env = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, { cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -51,6 +54,15 @@ function usage(output: string): { tokens?: number; costMicros?: number } {
     return { ...(Number.isFinite(tokens) && tokens > 0 ? { tokens } : {}), ...(Number.isFinite(cost) && cost >= 0 ? { costMicros: Math.round(cost * 1_000_000) } : {}) };
   } catch { return {}; }
 }
+export async function applySuitePatches(repo: string, patches: SuitePatch[] = []): Promise<void> {
+  for (const patch of patches) {
+    const path = resolve(repo, patch.path);
+    if (!path.startsWith(`${resolve(repo)}${process.platform === 'win32' ? '\\' : '/'}`)) throw new Error(`Suite patch escapes repo: ${patch.path}`);
+    const content = await readFile(path, 'utf8');
+    if (!content.includes(patch.from)) throw new Error(`Suite patch did not match ${patch.path}`);
+    await writeFile(path, content.replace(patch.from, patch.to), 'utf8');
+  }
+}
 export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, conditions: TrialCondition[] = ['A', 'B', 'C']) {
   if (!harnessTemplate.includes('{prompt}')) throw new Error('Harness template must include {prompt}.');
   return runBenchmark(tasks.map((task) => ({ ...task, run: async (condition) => {
@@ -59,6 +71,7 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
     const started = Date.now();
     try {
       await cp(resolve(task.repoPath), repo, { recursive: true, filter: (source) => !/[\\/](?:\.git|node_modules|dist|coverage)(?:[\\/]|$)/.test(source) });
+      await applySuitePatches(repo, task.setup);
       await removeWeftSetup(repo);
       if (condition !== 'A') await syncClaudeInstructions(repo, CLAUDE_CODE_GUIDELINES);
       if (condition === 'C') {
@@ -72,6 +85,11 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
           db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('bench', repo, 'bench', 'now', 'now');
           await indexRepository(db, 'bench', repo, { force: true });
         } finally { db.close(); }
+        const cli = resolve(process.argv[1] ?? 'dist/cli/index.js');
+        const hookBin = process.platform === 'win32'
+          ? `set WEFT_STATE_DIR="${state}"&& "${process.execPath}" "${cli}"`
+          : `WEFT_STATE_DIR="${state}" "${process.execPath}" "${cli}"`;
+        await installClaudeHooks({ projectRoot: repo, home: work, bin: hookBin });
         const configPath = join(repo, '.mcp.json');
         const config = JSON.parse(await readFile(configPath, 'utf8')) as { mcpServers: Record<string, Record<string, unknown>> };
         config.mcpServers.weft = { command: process.execPath, args: [resolve(process.argv[1] ?? 'dist/cli/index.js'), 'mcp', 'serve'], env: process.platform === 'win32' ? { LOCALAPPDATA: localAppData } : { XDG_STATE_HOME: join(work, 'weft-state') } };
@@ -88,8 +106,10 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
   } })), conditions);
 }
 export async function loadSuite(path: string): Promise<SuiteTask[]> {
-  const parsed = JSON.parse(await readFile(path, 'utf8')) as { tasks?: SuiteTask[] } | SuiteTask[];
-  const tasks = Array.isArray(parsed) ? parsed : parsed.tasks;
-  if (!tasks?.length || tasks.some((task) => !task.id || !task.prompt || !task.repoPath || !task.testCommand)) throw new Error('Suite must contain tasks with id, repoPath, prompt, and testCommand.');
-  return tasks;
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
+  const tasks = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' ? (parsed as { tasks?: unknown }).tasks : undefined;
+  const validPatch = (patch: unknown): patch is SuitePatch => Boolean(patch && typeof patch === 'object' && typeof (patch as SuitePatch).path === 'string' && typeof (patch as SuitePatch).from === 'string' && typeof (patch as SuitePatch).to === 'string');
+  const validTask = (task: unknown): task is SuiteTask => Boolean(task && typeof task === 'object' && typeof (task as SuiteTask).id === 'string' && typeof (task as SuiteTask).title === 'string' && ['bugfix', 'feature', 'refactor', 'comprehension'].includes((task as SuiteTask).category) && typeof (task as SuiteTask).repoPath === 'string' && typeof (task as SuiteTask).prompt === 'string' && typeof (task as SuiteTask).testCommand === 'string' && ((task as SuiteTask).setup === undefined || (Array.isArray((task as SuiteTask).setup) && (task as SuiteTask).setup!.every(validPatch))) && ((task as SuiteTask).solution === undefined || (Array.isArray((task as SuiteTask).solution) && (task as SuiteTask).solution!.every(validPatch))) && ((task as SuiteTask).estimatedTokens === undefined || (Number.isInteger((task as SuiteTask).estimatedTokens) && (task as SuiteTask).estimatedTokens! > 0)));
+  if (!Array.isArray(tasks) || !tasks.length || tasks.some((task) => !validTask(task)) || new Set(tasks.map((task) => (task as SuiteTask).id)).size !== tasks.length) throw new Error('Suite tasks must have unique ids and valid task, setup, and solution fields.');
+  return (tasks as SuiteTask[]).map((task) => ({ ...task, setup: task.setup ?? [], solution: task.solution ?? [] }));
 }

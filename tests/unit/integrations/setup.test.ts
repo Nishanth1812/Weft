@@ -46,4 +46,17 @@ describe('global setup', () => {
     await setupWeft({ home: root, harnesses: ['claude-code'], runner: already });
     expect(already).toHaveBeenCalledTimes(1);
   });
+
+  it('sets up T3 through Claude and Codex and repairs stale Weft hook paths on rerun', async () => {
+    const root = await home();
+    await Promise.all([join(root, '.claude'), join(root, '.codex')].map(async (path) => import('node:fs/promises').then(({ mkdir }) => mkdir(path, { recursive: true }))));
+    const stale = 'node "C:/old/weft/dist/cli/index.js"';
+    await setupWeft({ home: root, harnesses: ['t3'], bin: stale, runner: vi.fn(async () => false) });
+    expect(JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.SessionStart[0].hooks[0].command).toContain('C:/old/weft');
+    expect(await readFile(join(root, '.codex/config.toml'), 'utf8')).toContain('[mcp_servers.weft]');
+    await setupWeft({ home: root, harnesses: ['t3'], bin: 'node "C:/current/weft/dist/cli/index.js"', runner: vi.fn(async () => false) });
+    expect(JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.SessionStart[0].hooks[0].command).toContain('C:/current/weft');
+    expect(JSON.parse(await readFile(join(root, '.claude.json'), 'utf8')).mcpServers.weft.command).toBe('weft');
+    await expect(readFile(join(root, '.t3/mcp.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });

@@ -76,6 +76,10 @@ weft hooks uninstall [--global]
 
 Claude Code hooks add a compact repository and checkpoint summary at session start, then save Git-state checkpoints on stop and before compaction. Project settings are written to `.claude/settings.json`; pass `--global` to use the user settings file. `--dry-run` previews installation without writing. Hook failures are silent and never stop the agent.
 
+## Seeing your real usage
+
+Run `weft stats --since 7d` to ingest local Claude Code and Codex transcript usage and see token totals, estimated cost, Weft adoption, and returned-token estimates. `weft costs` and `weft sessions` include the same ingested sessions. Transcript parsing stores usage metadata and tool names only; prompt and response text are never saved. Costs depend on the models covered by Weft's local pricing table, and file baselines are available only for indexed files.
+
 ---
 
 ## 📊 Economics & Savings Model
@@ -84,7 +88,13 @@ Claude Code hooks add a compact repository and checkpoint summary at session sta
 
 `weft bench retrieval` compares whole-file literal-search reading with Weft's default 1500-token compact context for each query in `tests/golden/queries.json`. The report shows per-query token estimates, expected-file coverage, and mean/median tokens and ratios. It measures retrieval cost only, not end-to-end task cost. Reports are written under the Weft user state directory (`benchmarks/`); use `--repo <name>` for a registered repository and `--json` for machine-readable output.
 
-`weft bench run --suite tests/benchmarks/suites/example.json --harness 'claude -p "{prompt}" --output-format json'` runs each task in isolated repo copies under conditions A (baseline), B (managed instructions), and C (instructions, MCP config, and a local index). The template must contain `{prompt}`; `{repoPath}` is also available. Harness JSON usage is labeled `provider_reported` when available; otherwise tokens are estimated and labeled `estimated`. Success requires both harness and `testCommand` to exit successfully. The report includes mean successful-task cost and its population variance per condition. Replace the example tasks with real, reproducible tasks before using results as evidence. No live results exist yet.
+`weft bench run --suite tests/benchmarks/suites/weft-core.json --harness 'claude -p "{prompt}" --output-format json' --repeat 3 --dry-run` prints the task × condition × repeat plan and estimated token ceiling without invoking a harness. To run the live measurement, add `--yes`:
+
+```sh
+weft bench run --suite tests/benchmarks/suites/weft-core.json --harness 'claude -p "{prompt}" --output-format json' --repeat 3 --yes
+```
+
+Each task runs in a temporary repository copy. Conditions A, B, and C measure the baseline harness, shared instructions, and Weft with MCP, lifecycle hooks, and a local index. The Markdown table reports pass rate, median cost per successful task, standard deviation of successful-task costs, and tokens used. Failed tasks are excluded from successful-task cost. Use `--json` for full machine-readable trial results and usage provenance; `--tasks id1,id2` selects a subset and `--repeat n` controls repetitions. Costs and token usage are provider-reported when available; estimated token usage is labeled `estimated`. No live result has been recorded yet.
 
 $$\text{Efficiency Score} = \frac{\text{Verified Tasks Completed}}{\text{Total Token Cost (\$) + Latency Overhead (Hours)}}$$
 

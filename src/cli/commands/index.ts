@@ -22,15 +22,21 @@ import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES, hookStateDir, installCl
 import { syncCodexInstructions, CODEX_GUIDELINES } from '../../integrations/codex/index.js';
 import { checkInstructions } from '../../integrations/instructions.js';
 import { getCacheDiagnostics, getCostSummary, listSessions } from '../../telemetry/analytics.js';
+import { getStats } from '../../telemetry/stats.js';
+import { ingestTranscripts } from '../../telemetry/transcripts.js';
 import { migrateDevPulse } from '../../migration/devpulse/migrator.js';
 import { openDatabase } from '../../storage/db.js';
 import { migrate } from '../../storage/migrator.js';
 import type Database from 'better-sqlite3';
 import { installMcpConfig, type Harness } from '../../integrations/mcpConfig.js';
+import { checkIntegrations } from '../../integrations/doctor.js';
 import { findMcpRepo, serveMcp } from '../../mcp/server.js';
 import { runRetrievalBenchmark } from '../../bench/retrieval.js';
 import { loadSuite, runLiveSuite } from '../../bench/live.js';
 import { ensureRepoOnboarded, indexWithinLimit } from '../../onboarding/auto.js';
+import { runVerification } from '../../verification/runner.js';
+import { suggestChecks } from '../../verification/suggest.js';
+import { recordVerification } from '../../memory/taskManager.js';
 
 type Result = { code: number; data?: unknown; warnings?: string[]; errors?: string[]; status?: string };
 class CommandError extends Error { constructor(message: string, readonly exitCode: number) { super(message); } }
@@ -98,6 +104,27 @@ function commandOnPath(name: string): boolean {
 export async function runCommand(args: string[], compactOutput = false): Promise<Result> {
   const [group, sub, ...rest] = args;
   validateFlags(args);
+  if (group === 'verify') {
+    const separator = args.indexOf('--'), command = separator < 0 ? '' : args.slice(separator + 1).join(' ');
+    const root = await getGitRoot(process.cwd()); if (!root) fail('Current directory is not a Git repository.', 3);
+    const db = database();
+    try {
+      const repo = repoRow(db), status = await getWorkingTreeStatus(root);
+      if (!command || args.includes('--suggest')) return { code: 0, data: await suggestChecks(root, [...status.staged, ...status.unstaged, ...status.untracked]) };
+      const taskArgs = args.slice(1, separator < 0 ? undefined : separator), taskId = option(taskArgs, '--task');
+      let task = taskId ? db.prepare('SELECT id FROM tasks WHERE id = ? AND repo_id = ?').get(taskId, repo.id) as { id: string } | undefined
+        : db.prepare("SELECT id FROM tasks WHERE repo_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1").get(repo.id) as { id: string } | undefined;
+      if (taskId && !task) fail(`Task not found for this repository: ${taskId}`, 3);
+      if (!task) task = createTask(db, repo.id, 'Verification');
+      const record = await runVerification(root, command);
+      if (!db.prepare('SELECT 1 FROM checkpoints WHERE task_id = ? LIMIT 1').get(task.id)) {
+        const current = await getWorkingTreeStatus(root), fingerprint = computeWorkingTreeFingerprint(current, await getHeadCommit(root) ?? '', current.branch);
+        saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: fingerprint, objective: '', status: 'active', findings: [], decisions: [], verification: [], nextAction: '' });
+      }
+      recordVerification(db, task.id, record);
+      return { code: record.exitCode, data: record };
+    } finally { db.close(); }
+  }
   if (group === 'init') {
     await mkdir(paths.config, { recursive: true }); await mkdir(paths.instructions, { recursive: true }); await mkdir(paths.state, { recursive: true }); await mkdir(paths.cache, { recursive: true });
     const config = await loadConfig(); await saveConfig(config);
@@ -109,7 +136,7 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   if (group === 'setup') {
     const home = process.env.HOME ?? process.env.USERPROFILE ?? process.cwd();
     const selected = (option(args, '--harness', 'claude-code,codex,opencode') ?? '').split(',');
-    if (selected.some((value) => !['claude-code', 'codex', 'opencode'].includes(value))) fail('--harness must be claude-code,codex,opencode', 2);
+    if (selected.some((value) => !['claude-code', 'codex', 'opencode', 't3'].includes(value))) fail('--harness must be claude-code,codex,opencode,or t3', 2);
     const dryRun = args.includes('--dry-run'), uninstall = args.includes('--uninstall');
     const data = await setupWeft({ home, harnesses: selected as Harness[], dryRun, uninstall });
     if (!dryRun) { const config = await loadConfig(); config.autoOnboard = !uninstall; await saveConfig(config); }
@@ -128,7 +155,11 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     try {
       const integrity = db.prepare('PRAGMA integrity_check').pluck().get() as string;
       const warnings = integrity === 'ok' ? [] : [`SQLite integrity check: ${integrity}`];
-      const data = { node: process.version, database: integrity, repositories: allRepos(db).length, weftOnPath: commandOnPath('weft') };
+      const home = process.env.HOME ?? process.env.USERPROFILE ?? process.cwd();
+      const integrations = await checkIntegrations(home);
+      const data = { node: process.version, database: integrity, repositories: allRepos(db).length, weftOnPath: commandOnPath('weft'), integrations };
+      const lines = integrations.map((item) => `${item.id}: ${item.status}${item.detail ? ` (${item.detail})` : ''}${item.fix ? `; fix: ${item.fix}` : ''}`);
+      if (compactOutput) return { code: warnings.length ? 6 : 0, data: lines.join('\n'), warnings };
       return { code: warnings.length ? 6 : 0, data, warnings };
     } finally { db.close(); }
   }
@@ -151,7 +182,8 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   if (group === 'mcp' && sub === 'install') {
     const harness = option(rest, '--harness');
     if (!isHarness(harness)) fail('--harness must be claude-code, codex, opencode, or t3', 2);
-    const result = await installMcpConfig(harness, { home: process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(), project: process.cwd(), dryRun: args.includes('--dry-run') });
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? process.cwd();
+    const result = await installMcpConfig(harness, { home, project: harness === 't3' ? undefined : process.cwd(), dryRun: args.includes('--dry-run') });
     return { code: 0, data: result };
   }
   if (group === 'hook') {
@@ -279,6 +311,13 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   if (group === 'portfolio') { const db = database(); try { const repos = allRepos(db).map((repo) => ({ name: repo.name, rootPath: repo.rootPath, registeredAt: repo.registeredAt })); const data = await generatePortfolioSummary(repos); return { code: findings(data.totals) ? 4 : 0, data }; } finally { db.close(); } }
   if (group === 'costs' || group === 'stats' || group === 'cache' || group === 'sessions') {
     const db = database(); try {
+      await ingestTranscripts(db);
+      if (group === 'stats') {
+        const stats = await getStats(db, duration(option(args, '--since')));
+        return { code: 0, data: compactOutput
+          ? `Sessions: ${stats.sessions}\nTokens: ${stats.input} input, ${stats.output} output, ${stats.cached} cached\nEstimated cost: ${stats.cost == null ? 'unavailable for these models' : `$${(stats.cost / 1_000_000).toFixed(4)}`}\nWeft adoption: ${stats.adoption.percent}% (${stats.adoption.weftCalls} Weft calls vs ${stats.adoption.explorationCalls} Grep/Glob/Read calls)\nReturned tokens: ${stats.toolTokens.returned} (baseline ${stats.toolTokens.baseline})`
+          : stats };
+      }
       if (group === 'sessions') return { code: 0, data: listSessions(db, requireCount(option(args, '--limit'), '--limit', 50)) };
       const since = duration(option(args, '--since'));
       const by = option(args, '--by') as 'harness' | 'model' | 'repo' | undefined;
@@ -302,8 +341,27 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     const suitePath = resolve(option(rest, '--suite') ?? 'tests/benchmarks/suites/example.json');
     const harness = option(rest, '--harness') ?? process.env.WEFT_BENCH_HARNESS;
     if (!harness) fail('Set --harness "command template containing {prompt}" or WEFT_BENCH_HARNESS.', 2);
-    const report = await runLiveSuite(await loadSuite(suitePath), harness);
-    return { code: 0, data: { ...report, usageProvenance: 'Each trial labels provider_reported or estimated usage.', costPerSuccessfulTaskVariance: 'Population variance in costMicros squared.' } };
+    const tasks = await loadSuite(suitePath);
+    const selected = option(rest, '--tasks')?.split(',').map((id) => id.trim()).filter(Boolean);
+    const filtered = selected ? tasks.filter((task) => selected.includes(task.id)) : tasks;
+    if (!filtered.length || (selected && filtered.length !== new Set(selected).size)) fail('No matching tasks for --tasks.', 2);
+    const repeat = Number(option(rest, '--repeat', '1'));
+    if (!Number.isInteger(repeat) || repeat < 1 || repeat > 100) fail('--repeat must be an integer from 1 to 100.', 2);
+    const estimate = filtered.reduce((sum, task) => sum + (task.estimatedTokens ?? 10_000), 0) * repeat * 3;
+    const plan = `Plan: ${filtered.length} tasks × 3 conditions × ${repeat} repeats; estimated token ceiling ${estimate.toLocaleString('en-US')}.`;
+    if (args.includes('--dry-run')) return { code: 0, data: plan };
+    if (!args.includes('--yes')) fail(`${plan} Rerun with --yes to start the live benchmark.`, 5);
+    const report = await runLiveSuite(Array.from({ length: repeat }, () => filtered).flat(), harness);
+    const successfulResults = Object.fromEntries((['A', 'B', 'C'] as const).map((condition) => [condition, report.results.filter((result) => result.condition === condition && result.success)])) as Record<'A' | 'B' | 'C', typeof report.results>;
+    const successfulCosts = Object.fromEntries((['A', 'B', 'C'] as const).map((condition) => [condition, successfulResults[condition].filter((result) => result.costProvenance === 'provider_reported').map((result) => result.costMicros).sort((left, right) => left - right)])) as Record<'A' | 'B' | 'C', number[]>;
+    const medianCost = (costs: number[]) => costs.length ? costs.length % 2 ? costs[Math.floor(costs.length / 2)]! : (costs[costs.length / 2 - 1]! + costs[costs.length / 2]!) / 2 : 0;
+    const reportedMedian = (condition: 'A' | 'B' | 'C') => successfulCosts[condition].length === successfulResults[condition].length ? medianCost(successfulCosts[condition]) : null;
+    const reportedSpread = (condition: 'A' | 'B' | 'C') => successfulCosts[condition].length === successfulResults[condition].length && successfulCosts[condition].length ? Math.sqrt(report.conditionResults[condition].successfulTaskCostVarianceMicros) : null;
+    const data = { ...report, plan, usageProvenance: 'Each trial labels provider_reported or estimated usage.', successfulTaskCostMedianMicros: Object.fromEntries((['A', 'B', 'C'] as const).map((condition) => [condition, reportedMedian(condition)])), costPerSuccessfulTaskSpreadMicros: Object.fromEntries((['A', 'B', 'C'] as const).map((condition) => [condition, reportedSpread(condition)])) };
+    if (!compactOutput) return { code: 0, data };
+    const money = (micros: number | null) => micros === null ? 'n/a' : `$${(micros / 1_000_000).toFixed(4)}`;
+    const rows = (['A', 'B', 'C'] as const).map((condition) => { const summary = report.conditionResults[condition]; const tokens = report.results.filter((result) => result.condition === condition).reduce((sum, result) => sum + result.tokensUsed, 0); const spread = reportedSpread(condition); return `| ${condition} | ${(summary.passRate * 100).toFixed(0)}% | ${money(reportedMedian(condition))} | ${money(spread === null ? null : spread)} | ${tokens} |`; });
+    return { code: 0, data: ['| Condition | Pass rate | Median cost per successful task | Cost spread (SD) | Tokens |', '|---|---:|---:|---:|---:|', ...rows, '', plan].join('\n') };
   }
   if (group === 'bench') fail('Use `weft bench retrieval [--repo <name>] [--json]` or `weft bench run --suite <file> --harness <template>`.', 2);
   if (group === 'clean') {
@@ -327,10 +385,11 @@ export async function runCommand(args: string[], compactOutput = false): Promise
 }
 
 function validateFlags(args: string[]): void {
-  const valueFlags = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite', '--harness', '--repo']);
-  const known = new Set([...valueFlags, '--force', '--repair', '--dry-run', '--keep-data', '--interactive', '--yes', '--global']);
+  const valueFlags = new Set(['--name', '--limit', '--budget', '--scope', '--since', '--source', '--by', '--suite', '--harness', '--repo', '--tasks', '--repeat', '--task']);
+  const known = new Set([...valueFlags, '--force', '--repair', '--dry-run', '--keep-data', '--interactive', '--yes', '--global', '--suggest']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
+    if (arg === '--') break;
     if (!arg.startsWith('--')) continue;
     if (!known.has(arg)) fail(`Unknown option: ${arg}`, 2);
     if (valueFlags.has(arg) && (!args[i + 1] || args[i + 1]!.startsWith('--'))) fail(`${arg} requires a value`, 2);

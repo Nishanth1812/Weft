@@ -3,13 +3,13 @@ export type TrialCondition = 'A' | 'B' | 'C';
 export const TRIAL_CONDITIONS: Readonly<Record<TrialCondition, string>> = {
   A: 'Baseline harness',
   B: 'Shared instructions',
-  C: 'Full Weft with index, retrieval, and checkpoints',
+  C: 'Full Weft with MCP, lifecycle hooks, and a local index',
 };
 
 export interface TaskDefinition {
   id: string;
   title: string;
-  category: 'bugfix' | 'refactor' | 'feature';
+  category: 'bugfix' | 'refactor' | 'feature' | 'comprehension';
   repoPath: string;
   testCommand: string;
   prompt?: string;

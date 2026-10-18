@@ -6,13 +6,13 @@ describe('migrate', () => {
   it('applies V1 once and creates the complete schema', () => {
     const db = openDatabase(':memory:');
     try {
-      expect(migrate(db)).toEqual([1]);
+      expect(migrate(db)).toEqual([1, 2]);
       expect(migrate(db)).toEqual([]);
       const tables = db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')").pluck().all();
-      for (const table of ['schema_migrations', 'repositories', 'repo_config_overrides', 'index_generations', 'repo_index_state', 'files', 'symbols', 'edges', 'chunks', 'chunk_fts', 'tasks', 'checkpoints', 'sessions', 'usage_events', 'cache_diagnostics', 'migration_ledger']) {
+      for (const table of ['schema_migrations', 'repositories', 'repo_config_overrides', 'index_generations', 'repo_index_state', 'files', 'symbols', 'edges', 'chunks', 'chunk_fts', 'tasks', 'checkpoints', 'sessions', 'usage_events', 'cache_diagnostics', 'migration_ledger', 'transcript_files', 'tool_calls', 'session_tool_calls']) {
         expect(tables).toContain(table);
       }
-      expect(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get()).toEqual({ count: 1 });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get()).toEqual({ count: 2 });
     } finally {
       db.close();
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../../../src/storage/db.js';
 import { migrate } from '../../../src/storage/migrator.js';
-import { createTask, resumeTask, saveCheckpoint } from '../../../src/memory/taskManager.js';
+import { createTask, latestVerification, recordVerification, resumeTask, saveCheckpoint } from '../../../src/memory/taskManager.js';
 
 describe('taskManager', () => {
   it('creates tasks and saves versioned checkpoints', () => {
@@ -23,6 +23,22 @@ describe('taskManager', () => {
       const task = createTask(db, 'r', 'Implement retrieval');
       saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: 'old', objective: 'x', status: 'active', findings: [{ text: 'fact', evidence: [{ path: 'a.ts', hash: 'h' }] }], decisions: [], verification: [], nextAction: 'next' });
       expect(resumeTask(db, task.id, 'new')).toMatchObject({ isStale: true, staleEvidence: ['a.ts'] });
+    } finally { db.close(); }
+  });
+  it('keeps verification across old checkpoint payloads and includes compact failure evidence', () => {
+    const db = openDatabase(':memory:');
+    try {
+      migrate(db);
+      db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', '/', 'r', 'now', 'now');
+      const task = createTask(db, 'r', 'Verify');
+      saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: 'fp', objective: 'x', status: 'active', findings: [], decisions: [], verification: [], nextAction: '', importedNotePayload: 'legacy' });
+      const record = { command: 'npm test', exitCode: 1, durationMs: 20, outputTail: 'Expected true, received false', ranAt: 'now', changedFiles: [] };
+      recordVerification(db, task.id, record);
+      expect(latestVerification(db, task.id)).toEqual(record);
+      saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: 'fp', objective: 'x', status: 'active', findings: [], decisions: [], verification: [], nextAction: 'continue' });
+      expect(latestVerification(db, task.id)).toEqual(record);
+      expect(resumeTask(db, task.id, 'fp').verificationText).toContain(record.outputTail);
+      expect(resumeTask(db, task.id, 'fp').verificationText!.length).toBeLessThan(200);
     } finally { db.close(); }
   });
 });

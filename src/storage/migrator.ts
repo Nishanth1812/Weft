@@ -87,7 +87,14 @@ CREATE TABLE migration_ledger (
 );
 `;
 
-const migrations = [{ version: 1, sql: v1 }];
+const v2 = `
+CREATE TABLE transcript_files (path TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL, mtime_ms INTEGER NOT NULL);
+CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+  tool TEXT NOT NULL, returned_tokens INTEGER NOT NULL, baseline_tokens INTEGER, ms INTEGER, observed_at TEXT NOT NULL);
+CREATE INDEX idx_tool_calls_repo_date ON tool_calls(repo_id, observed_at);
+CREATE TABLE session_tool_calls (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, calls INTEGER NOT NULL, PRIMARY KEY(session_id, tool));
+`;
+const migrations = [{ version: 1, sql: v1 }, { version: 2, sql: v2 }];
 const checksum = (sql: string) => createHash('sha256').update(sql).digest('hex');
 
 export function migrate(db: Database.Database, now: () => string = () => new Date().toISOString()): number[] {
