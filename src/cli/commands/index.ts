@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, delimiter, join, resolve } from 'node:path';
@@ -132,7 +132,8 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   }
   if (group === 'hooks') {
     const options = { projectRoot: process.cwd(), home: process.env.HOME ?? process.env.USERPROFILE, global: args.includes('--global'), dryRun: args.includes('--dry-run') };
-    if (sub === 'install') return { code: 0, data: await installClaudeHooks(options) };
+    // Calling node on the real CLI path skips the npm shim (~270ms per hook on Windows); --portable keeps plain `ctx`.
+    if (sub === 'install') return { code: 0, data: await installClaudeHooks({ ...options, bin: args.includes('--portable') || !process.argv[1] ? 'ctx' : `node "${realpathSync(resolve(process.argv[1])).replace(/\\/g, '/')}"` }) };
     if (sub === 'uninstall') return { code: 0, data: await uninstallClaudeHooks(options) };
     fail('Use `ctx hooks install|uninstall [--global] [--dry-run]`.', 2);
   }

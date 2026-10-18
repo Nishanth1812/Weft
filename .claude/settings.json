@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ctx hook session-start # weft-hook"
+            "command": "node \"H:/Personal/Projects/Weft/dist/cli/index.js\" hook session-start # weft-hook"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ctx hook stop # weft-hook"
+            "command": "node \"H:/Personal/Projects/Weft/dist/cli/index.js\" hook stop # weft-hook"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ctx hook pre-compact # weft-hook"
+            "command": "node \"H:/Personal/Projects/Weft/dist/cli/index.js\" hook pre-compact # weft-hook"
           }
         ]
       }

@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -73,6 +74,25 @@ describe('Claude Code hooks', () => {
     expect(performance.now() - started).toBeLessThan(500);
     expect(output).toContain('weft_* MCP tools');
     expect(estimateTokens(output)).toBeLessThanOrEqual(400);
+  });
+
+  it('reads branch and changes from real git with a single status call', async () => {
+    const root = await tempDir();
+    const stateDir = join(root, 'state');
+    const repo = join(root, 'repo');
+    await mkdir(repo);
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'ignore' });
+    git('init', '-b', 'trunk');
+    await writeFile(join(repo, 'a.txt'), 'a');
+    git('add', '.');
+    git('commit', '-m', 'init');
+    await writeFile(join(repo, 'a.txt'), 'changed');
+    await writeFile(join(repo, 'b.txt'), 'new');
+    const db = openDatabase(stateDir);
+    try { migrate(db); db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', repo, 'repo', 'now', 'now'); }
+    finally { db.close(); }
+    const output = await runSessionStartHook({ cwd: join(repo), stateDir, writeIndexMarker: false });
+    expect(output).toContain('Repo repo | trunk | dirty: 2 files');
   });
 
   it('dry run does not create settings', async () => {
