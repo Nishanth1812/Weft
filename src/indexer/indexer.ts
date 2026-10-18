@@ -21,26 +21,33 @@ export async function indexRepository(
   if (db.name === ':memory:') return indexRepositoryLocked(db, repoId, repoRoot, options);
   const lockPath = `${db.name}.${createHash('sha1').update(repoId).digest('hex')}.index.lock`;
   const started = Date.now();
+  const token = randomUUID();
+  const read = async () => { try { return JSON.parse(await readFile(lockPath, 'utf8')) as { pid?: number; at?: number; token?: string }; } catch { return undefined; } };
+  // Remove a lock only while it still holds the content we judged stale, so a lock another process just created survives.
+  const removeIf = async (expected: string | undefined) => { if ((await read())?.token === expected) await rm(lockPath, { force: true }); };
   let acquired = false;
   while (!acquired) {
     try {
-      writeFileSync(lockPath, JSON.stringify({ pid: process.pid, at: Date.now() }), { flag: 'wx' });
+      writeFileSync(lockPath, JSON.stringify({ pid: process.pid, at: Date.now(), token }), { flag: 'wx' });
       acquired = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        const lock = JSON.parse(await readFile(lockPath, 'utf8')) as { pid?: number; at?: number };
+      const lock = await read();
+      if (!lock) { // Unreadable: either still being written or damaged. Only a damaged one older than 5 s is removed.
+        const age = await stat(lockPath).then(info => Date.now() - info.mtimeMs, () => 0);
+        if (age > 5_000) await rm(lockPath, { force: true });
+      } else {
         let alive = false;
         if (Number.isInteger(lock.pid)) { try { process.kill(lock.pid!, 0); alive = true; } catch (e) { alive = (e as NodeJS.ErrnoException).code === 'EPERM'; } }
-        const age = Date.now() - (lock.at ?? (await stat(lockPath)).mtimeMs);
-        if (!alive || age > 10 * 60_000) { await rm(lockPath, { force: true }); continue; }
-      } catch { await rm(lockPath, { force: true }); continue; }
+        // shortcut: a live holder is only taken over after 60 minutes (pid reuse), no heartbeat; add one if builds ever approach that.
+        if (!alive || Date.now() - (lock.at ?? 0) > 60 * 60_000) { await removeIf(lock.token); continue; }
+      }
       if (Date.now() - started > 30_000) throw new Error('Index already running for this repository; retry shortly.');
       await new Promise(resolve => setTimeout(resolve, 50));
     }
   }
   try { return await indexRepositoryLocked(db, repoId, repoRoot, options); }
-  finally { await rm(lockPath, { force: true }); }
+  finally { await removeIf(token); }
 }
 
 async function indexRepositoryLocked(

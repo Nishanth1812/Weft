@@ -58,6 +58,11 @@ const realGitState: GitState = (() => {
 })();
 const samePath = (a: string, b: string) => resolve(a).replace(/\\/g, '/').toLowerCase() === resolve(b).replace(/\\/g, '/').toLowerCase();
 
+// Starts the memoised git call now so it runs while the caller opens the database and checks onboarding.
+export function prefetchGitState(cwd: string): void {
+  void hookGitRoot(cwd).then((root) => root && realGitState(root, 'status')).catch(() => undefined);
+}
+
 function dbAt(stateDir: string): Database.Database { const db = openDatabase(stateDir); migrate(db); return db; }
 function repoFor(db: Database.Database, cwd: string) {
   return db.prepare('SELECT id, root_path AS rootPath, display_name AS name FROM repositories').all()

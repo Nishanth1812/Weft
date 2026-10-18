@@ -68,7 +68,7 @@ async function ingestFile(db: Database.Database, path: string, harness: 'claude-
     if (harness === 'codex' && row.type === 'event_msg' && row.payload?.type === 'token_count') {
       const usage = row.payload.info?.total_token_usage; if (!usage) continue;
       const item = [...sessionUses.values()].at(-1); if (!item) continue;
-      item.rows.set('total', { input: count(usage.input_tokens), output: count(usage.output_tokens), cached: count(usage.cached_input_tokens), write: 0, model: null, at: row.timestamp ?? item.at });
+      item.rows.set('total', { input: Math.max(0, count(usage.input_tokens) - count(usage.cached_input_tokens)) /* Codex input already includes cached */, output: count(usage.output_tokens), cached: count(usage.cached_input_tokens), write: 0, model: null, at: row.timestamp ?? item.at });
     }
     if (harness === 'codex' && row.type === 'response_item' && row.payload?.type === 'function_call' && typeof row.payload.name === 'string') {
       const item = [...sessionUses.values()].at(-1);

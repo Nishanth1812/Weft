@@ -372,16 +372,16 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     const db = database(); try {
       const scope = option(args, '--scope', 'indexes'); if (!['indexes', 'all'].includes(scope!)) fail('--scope must be indexes or all', 2);
       const rows = db.prepare(`SELECT g.id FROM index_generations g LEFT JOIN repo_index_state s ON s.repo_id = g.repo_id
-        WHERE g.id != COALESCE(s.active_generation, -1) AND (g.status != 'ready' OR g.completed_at < datetime('now', '-7 days'))
+        WHERE g.id != COALESCE(s.active_generation, -1) AND (g.status != 'ready' OR datetime(g.completed_at) < datetime('now', '-7 days'))
         AND g.id NOT IN (SELECT id FROM index_generations newer WHERE newer.repo_id = g.repo_id AND newer.status = 'ready' AND newer.id != COALESCE(s.active_generation, -1) ORDER BY newer.id DESC LIMIT 1)`).all() as Array<{ id: number }>;
-      const oldTelemetry = scope === 'all' ? (db.prepare("SELECT (SELECT COUNT(*) FROM tool_calls WHERE observed_at < datetime('now', '-90 days')) + (SELECT COUNT(*) FROM usage_events WHERE observed_at < datetime('now', '-90 days')) AS count").get() as { count: number }).count : 0;
+      const oldTelemetry = scope === 'all' ? (db.prepare("SELECT (SELECT COUNT(*) FROM tool_calls WHERE datetime(observed_at) < datetime('now', '-90 days')) + (SELECT COUNT(*) FROM usage_events WHERE datetime(observed_at) < datetime('now', '-90 days')) AS count").get() as { count: number }).count : 0;
       const dryRun = args.includes('--dry-run');
       if (!dryRun && !args.includes('--yes')) fail('Confirmation required; rerun with --yes.', 5);
       if (!dryRun) {
         const del = db.prepare('DELETE FROM index_generations WHERE id = ?');
         db.transaction(() => {
           for (const row of rows) del.run(row.id);
-          if (scope === 'all') { db.prepare("DELETE FROM tool_calls WHERE observed_at < datetime('now', '-90 days')").run(); db.prepare("DELETE FROM usage_events WHERE observed_at < datetime('now', '-90 days')").run(); }
+          if (scope === 'all') { db.prepare("DELETE FROM tool_calls WHERE datetime(observed_at) < datetime('now', '-90 days')").run(); db.prepare("DELETE FROM usage_events WHERE datetime(observed_at) < datetime('now', '-90 days')").run(); }
         })();
         db.exec('VACUUM');
       }

@@ -25,7 +25,7 @@ describe('transcript ingestion', () => {
       await ingestTranscripts(db, { home }); await ingestTranscripts(db, { home });
       expect(db.prepare('SELECT COUNT(*) AS n FROM usage_events').get()).toEqual({ n: 3 });
       expect(db.prepare("SELECT input_tokens, output_tokens FROM usage_events WHERE id='claude-code:claude-1'").get()).toEqual({ input_tokens: 6, output_tokens: 2 });
-      expect(db.prepare("SELECT input_tokens, output_tokens FROM usage_events WHERE id='codex:codex-1'").get()).toEqual({ input_tokens: 12, output_tokens: 6 });
+      expect(db.prepare("SELECT input_tokens, output_tokens FROM usage_events WHERE id='codex:codex-1'").get()).toEqual({ input_tokens: 9, output_tokens: 6 }); // Codex input_tokens already includes the 3 cached tokens
       expect(db.prepare("SELECT repo_id FROM sessions WHERE id='claude-code:unregistered'").get()).toEqual({ repo_id: null });
       expect(JSON.stringify(db.prepare('SELECT * FROM usage_events').all())).not.toContain(secret);
       expect(db.prepare('SELECT SUM(calls) AS n FROM session_tool_calls').get()).toEqual({ n: 2 });

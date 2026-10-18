@@ -30,7 +30,12 @@ export async function repairCorruptDatabase(stateDir: string, repair = true): Pr
   const path = join(stateDir, 'weft.db');
   if (!existsSync(path)) return { integrity: 'missing' };
   let integrity = 'unreadable';
-  try { const db = new Database(path, { readonly: true, fileMustExist: true }); try { integrity = db.pragma('quick_check', { simple: true }) as string; } finally { db.close(); } } catch { /* Treat an unreadable database as corrupt. */ }
+  try { const db = new Database(path, { readonly: true, fileMustExist: true }); try { integrity = db.pragma('quick_check', { simple: true }) as string; } finally { db.close(); } }
+  catch (error) {
+    // Only a database SQLite calls corrupt is moved aside; a busy or locked one is in use and must stay where it is.
+    const code = (error as { code?: string }).code ?? '';
+    if (!/^SQLITE_(CORRUPT|NOTADB)/.test(code)) return { integrity: `unreadable (${code || 'unknown'})` };
+  }
   if (integrity === 'ok' || !repair) return { integrity };
   const backup = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   await rename(path, backup);

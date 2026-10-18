@@ -1,4 +1,4 @@
-import { hookStateDir, logHookFailure, runCheckpointHook, runSessionStartHook } from '../hooks/claude.js';
+import { hookStateDir, logHookFailure, prefetchGitState, runCheckpointHook, runSessionStartHook } from '../hooks/claude.js';
 import { runHookSafely } from '../integrations/claude-code/index.js';
 import { ensureRepoOnboarded } from '../onboarding/auto.js';
 
@@ -6,6 +6,7 @@ import { ensureRepoOnboarded } from '../onboarding/auto.js';
 export async function runHookCommand(event: string | undefined): Promise<{ code: number; data?: string }> {
   try {
     if (event !== 'session-start' && event !== 'stop' && event !== 'pre-compact') { await logHookFailure(hookStateDir(), new Error(`Unknown hook event: ${event ?? ''}`)); return { code: 0 }; }
+    prefetchGitState(process.cwd());
     const data = await runHookSafely(async () => {
       if (event === 'session-start') { await ensureRepoOnboarded(process.cwd()); return runSessionStartHook({ stateDir: hookStateDir() }); }
       await runCheckpointHook({ stateDir: hookStateDir() });

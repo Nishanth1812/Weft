@@ -35,6 +35,14 @@ async function removeWeftSetup(repo: string): Promise<void> {
 
 export interface SuitePatch { path: string; from: string; to: string }
 export type SuiteTask = TaskDefinition & { prompt: string; setup?: SuitePatch[]; solution?: SuitePatch[]; estimatedTokens?: number };
+// POSIX single quotes stop the shell expanding backticks, $(...) and $VAR in prompt text; cmd.exe has no equivalent, so double quotes with escaped quotes.
+export function shellQuote(value: string, platform = process.platform): string {
+  return platform === 'win32' ? `"${value.replace(/"/g, '\\"')}"` : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+// A placeholder already wrapped in quotes in the template ("{prompt}") is replaced whole, so it is never quoted twice.
+export function fillTemplate(template: string, values: Record<string, string>): string {
+  return template.replace(/(["']?)\{(prompt|repoPath)\}\1/g, (_match, _quote, name: string) => shellQuote(values[name] ?? ''));
+}
 const RETRY_WAITS_MS = process.env.WEFT_BENCH_RETRY_WAITS_MS ? process.env.WEFT_BENCH_RETRY_WAITS_MS.split(',').map(Number) : [30_000, 120_000, 300_000];
 function execute(command: string, cwd: string, env = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
@@ -100,7 +108,7 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
         await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
       }
       const prompt = task.prompt.replaceAll('{condition}', condition).replaceAll('{repoPath}', repo);
-      const command = harnessTemplate.replaceAll('{prompt}', JSON.stringify(prompt)).replaceAll('{repoPath}', JSON.stringify(repo));
+      const command = fillTemplate(harnessTemplate, { prompt, repoPath: repo });
       // A harness that cannot start (rate or usage limit, network) says nothing about the task: back off and retry before recording a failure.
       let harness = await execute(command, repo);
       for (const wait of RETRY_WAITS_MS) {
