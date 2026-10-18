@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { syncInstructions } from '../instructions.js';
 
-export const CODEX_GUIDELINES = '# Weft Core Guidelines\n- Run `weft search <query>` before broad repository searches.\n- Save session state with `weft checkpoint <id>`.';
+export const CODEX_GUIDELINES = '# Weft Core Guidelines\n- To explore code, call the `weft_context` / `weft_search` MCP tools (CLI: `weft context "<query>"`) before grepping or reading whole files; use `weft_read` for exact line ranges.\n- Checkpoints are saved automatically; only run `weft task start <title>` to name a long task.';
 
 export function syncCodexInstructions(repoRoot: string, managedContent = CODEX_GUIDELINES, dryRun = false) {
   return syncInstructions(join(repoRoot, 'AGENTS.md'), managedContent, dryRun);

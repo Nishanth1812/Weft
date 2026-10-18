@@ -3,14 +3,14 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { getUserPaths } from './paths.js';
 
-export interface WeftConfig { version: 1; repositories: string[] }
-const DEFAULT_CONFIG: WeftConfig = { version: 1, repositories: [] };
+export interface WeftConfig { version: 1; repositories: string[]; autoOnboard: boolean; maxTrackedFiles: number }
+const DEFAULT_CONFIG: WeftConfig = { version: 1, repositories: [], autoOnboard: true, maxTrackedFiles: 20_000 };
 const configPath = () => join(getUserPaths().config, 'config.json');
 
 function validateConfig(value: unknown): WeftConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...DEFAULT_CONFIG };
   const data = value as Record<string, unknown>;
-  return { version: 1, repositories: Array.isArray(data.repositories) ? data.repositories.filter((v): v is string => typeof v === 'string') : [] };
+  return { version: 1, repositories: Array.isArray(data.repositories) ? data.repositories.filter((v): v is string => typeof v === 'string') : [], autoOnboard: typeof data.autoOnboard === 'boolean' ? data.autoOnboard : true, maxTrackedFiles: Number.isSafeInteger(data.maxTrackedFiles) && Number(data.maxTrackedFiles) > 0 ? Number(data.maxTrackedFiles) : 20_000 };
 }
 
 export async function loadConfig(path = configPath()): Promise<WeftConfig> {

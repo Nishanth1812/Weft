@@ -5,6 +5,7 @@ import { basename, delimiter, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getUserPaths } from '../../config/paths.js';
 import { loadConfig, saveConfig } from '../../config/manager.js';
+import { setupWeft } from '../../integrations/setup.js';
 import { createTask, resumeTask, saveCheckpoint } from '../../memory/taskManager.js';
 import { checkRepoHealth, type HealthReport } from '../../health/healthChecker.js';
 import { generatePortfolioSummary } from '../../health/portfolio.js';
@@ -26,9 +27,10 @@ import { openDatabase } from '../../storage/db.js';
 import { migrate } from '../../storage/migrator.js';
 import type Database from 'better-sqlite3';
 import { installMcpConfig, type Harness } from '../../integrations/mcpConfig.js';
-import { serveMcp } from '../../mcp/server.js';
+import { findMcpRepo, serveMcp } from '../../mcp/server.js';
 import { runRetrievalBenchmark } from '../../bench/retrieval.js';
 import { loadSuite, runLiveSuite } from '../../bench/live.js';
+import { ensureRepoOnboarded, indexWithinLimit } from '../../onboarding/auto.js';
 
 type Result = { code: number; data?: unknown; warnings?: string[]; errors?: string[]; status?: string };
 class CommandError extends Error { constructor(message: string, readonly exitCode: number) { super(message); } }
@@ -104,6 +106,22 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     if (!existsSync(intentPath)) await writeFile(intentPath, generateDefaultIntent(), 'utf8');
     return { code: 0, data: { initialized: true, paths } };
   }
+  if (group === 'setup') {
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? process.cwd();
+    const selected = (option(args, '--harness', 'claude-code,codex,opencode') ?? '').split(',');
+    if (selected.some((value) => !['claude-code', 'codex', 'opencode'].includes(value))) fail('--harness must be claude-code,codex,opencode', 2);
+    const dryRun = args.includes('--dry-run'), uninstall = args.includes('--uninstall');
+    const data = await setupWeft({ home, harnesses: selected as Harness[], dryRun, uninstall });
+    if (!dryRun) { const config = await loadConfig(); config.autoOnboard = !uninstall; await saveConfig(config); }
+    return { code: 0, data };
+  }
+  if (group === 'auto') {
+    const action = sub;
+    if (!['on', 'off', 'status'].includes(action ?? '')) fail('Use `weft auto on|off|status`.', 2);
+    const config = await loadConfig();
+    if (action !== 'status') { config.autoOnboard = action === 'on'; await saveConfig(config); }
+    return { code: 0, data: { autoOnboard: config.autoOnboard } };
+  }
   if (group === 'doctor') {
     if (!existsSync(dbFile) && !args.includes('--repair')) fail('Weft is not initialized. Run `weft init` first.', 3);
     const db = database(false);
@@ -115,8 +133,19 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     } finally { db.close(); }
   }
   if (group === 'mcp' && sub === 'serve') {
-    const db = database(); const repo = repoRow(db);
-    serveMcp(db, { id: repo.id, rootPath: repo.root_path });
+    const root = await getGitRoot(process.cwd());
+    if (root) await ensureRepoOnboarded(process.cwd(), { spawnIndex: false });
+    const db = database(false);
+    const repo = root ? findMcpRepo(db, root) : undefined;
+    if (repo) {
+      const index = db.prepare('SELECT active_generation FROM repo_index_state WHERE repo_id = ?').get(repo.id) as { active_generation: number | null } | undefined;
+      if (!index?.active_generation) {
+        const config = await loadConfig();
+        if (await indexWithinLimit(repo.rootPath, config.maxTrackedFiles, db, repo.id)) { /* tool calls explain the skipped index */ }
+        else await indexRepository(db, repo.id, repo.rootPath);
+      }
+    }
+    serveMcp(db, repo ? { id: repo.id, rootPath: repo.rootPath } : null);
     return await new Promise<Result>(() => {});
   }
   if (group === 'mcp' && sub === 'install') {
@@ -126,7 +155,7 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     return { code: 0, data: result };
   }
   if (group === 'hook') {
-    if (sub === 'session-start') { const data = await runSessionStartHook({ stateDir: hookStateDir() }); return { code: 0, data: data || undefined }; }
+    if (sub === 'session-start') { await ensureRepoOnboarded(process.cwd()); const data = await runSessionStartHook({ stateDir: hookStateDir() }); return { code: 0, data: data || undefined }; }
     if (sub === 'stop' || sub === 'pre-compact') { await runCheckpointHook({ stateDir: hookStateDir() }); return { code: 0, data: '' }; }
     fail('Use `weft hook session-start|stop|pre-compact`.', 2);
   }
@@ -188,12 +217,12 @@ export async function runCommand(args: string[], compactOutput = false): Promise
       const db = database(); try { const rows = allRepos(db); const result = fuzzyFindRepo(query, rows.map(({ name, rootPath, registeredAt }) => ({ name, rootPath, registeredAt }))); return { code: result.match ? 0 : 4, data: result, warnings: result.match ? [] : ['No unique repository match.'] }; } finally { db.close(); }
     }
     if (sub === 'status') {
-      const db = database(); try { const repo = repoRow(db, positional(rest)[0]); const git = await getWorkingTreeStatus(repo.root_path); const index = db.prepare('SELECT active_generation FROM repo_index_state WHERE repo_id = ?').get(repo.id); return { code: 0, data: { repo, git, index } }; } finally { db.close(); }
+      const db = database(); try { const repo = repoRow(db, positional(rest)[0]); const git = await getWorkingTreeStatus(repo.root_path); const index = db.prepare('SELECT active_generation FROM repo_index_state WHERE repo_id = ?').get(repo.id); const config = db.prepare('SELECT config_json FROM repositories WHERE id = ?').get(repo.id) as { config_json: string }; const note = (JSON.parse(config.config_json) as { weftOnboardingNote?: string }).weftOnboardingNote; return { code: 0, data: { repo, git, index, ...(note ? { onboardingNote: note } : {}) } }; } finally { db.close(); }
     }
     fail('Use `weft repos register|unregister|list|fuzzy|status`.', 2);
   }
   if (group === 'index') {
-    const db = database(); try { const repo = repoRow(db, positional(args.slice(1))[0]); return { code: 0, data: await indexRepository(db, repo.id, repo.root_path, { force: args.includes('--force') }) }; } finally { db.close(); }
+    const db = database(); try { const repo = repoRow(db, positional(args.slice(1))[0]); const config = await loadConfig(); const note = await indexWithinLimit(repo.root_path, config.maxTrackedFiles, db, repo.id); return note ? { code: 0, data: { skipped: true, note } } : { code: 0, data: await indexRepository(db, repo.id, repo.root_path, { force: args.includes('--force') }) }; } finally { db.close(); }
   }
   if (group === 'search' || group === 'context') {
     const values = positional(args.slice(1));

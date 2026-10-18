@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 export const BEGIN_MANAGED_BLOCK = '<!-- BEGIN WEFT MANAGED BLOCK -->';
@@ -29,6 +29,7 @@ export async function syncInstructions(targetPath: string, managedContent: strin
   }
   const modified = content !== original;
   if (modified && !dryRun) {
+    await mkdir(dirname(targetPath), { recursive: true });
     const temporary = join(dirname(targetPath), `.${randomUUID()}.tmp`);
     try { await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' }); await rename(temporary, targetPath); }
     finally { await rm(temporary, { force: true }); }

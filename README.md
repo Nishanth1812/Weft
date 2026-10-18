@@ -6,6 +6,14 @@ Weft is a fast, local-first developer productivity layer engineered to run along
 
 ---
 
+## Zero-touch setup
+
+Run `weft setup` once to add Weft to existing Claude Code, Codex, and OpenCode user configurations and enable repository auto-onboarding. Use `--harness claude-code,codex,opencode` to select harnesses, or `--dry-run` to preview. Setup only touches harness config directories that already exist. It adds Claude Code hooks to `~/.claude/settings.json`, its user MCP server to top-level `mcpServers` in `~/.claude.json`, and managed instructions to `~/.claude/CLAUDE.md`; Codex gets `mcp_servers.weft` in `~/.codex/config.toml` and managed instructions in `~/.codex/AGENTS.md`; OpenCode gets `mcp.weft` in `~/.config/opencode/opencode.json` and managed instructions in `~/.config/opencode/AGENTS.md`. Existing unrelated settings and instruction text are preserved. Setup files are never written into repositories.
+
+New Git workspaces are registered when a Claude Code session starts or Weft MCP starts, then indexed without delaying the session hook. Repositories with more than 20,000 tracked files are registered but indexing is skipped with a note in `weft repos status`; change `maxTrackedFiles` in Weft's user config to adjust the limit. Use `weft auto off|on|status` to control onboarding. `weft setup --uninstall` removes Weft-managed harness entries and instruction blocks and turns auto-onboarding off; it keeps the harness config files and unrelated entries.
+
+---
+
 ## 🚀 Key Capabilities
 
 1. **Instant Incremental Repository Indexing (`weft index`)**

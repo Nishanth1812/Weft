@@ -149,9 +149,11 @@ export async function installClaudeHooks(options: { projectRoot?: string; home?:
   return { path, modified, dryRun: !!options.dryRun };
 }
 
-export async function uninstallClaudeHooks(options: { projectRoot?: string; home?: string; global?: boolean } = {}) {
+export async function uninstallClaudeHooks(options: { projectRoot?: string; home?: string; global?: boolean; dryRun?: boolean } = {}) {
   const path = options.global ? join(options.home ?? homedir(), '.claude', 'settings.json') : join(options.projectRoot ?? process.cwd(), '.claude', 'settings.json');
-  const settings = JSON.parse(await readFile(path, 'utf8')) as Settings;
+  let settings: Settings;
+  try { settings = JSON.parse(await readFile(path, 'utf8')) as Settings; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { path, modified: false }; throw error; }
   const hooks = { ...settings.hooks };
   let modified = false;
   for (const event of EVENTS) {
@@ -162,7 +164,7 @@ export async function uninstallClaudeHooks(options: { projectRoot?: string; home
       return { ...entry, hooks: kept };
     }).filter((entry) => (entry.hooks ?? []).length);
   }
-  if (modified) { const temp = `${path}.${process.pid}.tmp`; await writeFile(temp, `${JSON.stringify({ ...settings, hooks }, null, 2)}\n`, 'utf8'); await rename(temp, path); }
+  if (modified && !options.dryRun) { const temp = `${path}.${process.pid}.tmp`; await writeFile(temp, `${JSON.stringify({ ...settings, hooks }, null, 2)}\n`, 'utf8'); await rename(temp, path); }
   return { path, modified };
 }
 

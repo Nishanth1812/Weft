@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { redactSafe } from '../core/security/redactor.js';
 import { searchChunks } from '../context/search.js';
@@ -20,14 +21,25 @@ export const MCP_TOOLS = [
 ];
 
 type Args = Record<string, unknown>;
+export function findMcpRepo(db: Database.Database, gitRoot: string) {
+  const key = (path: string) => resolve(path).replace(/\\/g, '/').toLowerCase();
+  return (db.prepare('SELECT id, root_path AS rootPath FROM repositories').all() as Array<{ id: string; rootPath: string }>).find((repo) => key(repo.rootPath) === key(gitRoot));
+}
 function requiredString(args: Args, name: string): string { const value = args[name]; if (typeof value !== 'string' || !value.trim()) throw new Error(`${name} is required`); return value; }
 
-export function createMcpHandler(db: Database.Database, repo: { id: string; rootPath: string }) {
+export function createMcpHandler(db: Database.Database, repo: { id: string; rootPath: string } | null) {
   return async (method: string, params: Args = {}): Promise<unknown> => {
     if (method === 'initialize') return { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'weft', version: '0.1.0' } };
     if (method === 'tools/list') return { tools: MCP_TOOLS };
     if (method !== 'tools/call') throw new Error(`Method not found: ${method}`);
     const name = requiredString(params, 'name'); const args = (params.arguments ?? {}) as Args;
+    if (!repo) return { content: [{ type: 'text', text: 'Weft MCP tools need a Git repository. Start the harness from inside a Git workspace.' }], isError: false };
+    const indexState = db.prepare('SELECT active_generation FROM repo_index_state WHERE repo_id = ?').get(repo.id) as { active_generation: number | null } | undefined;
+    if (!indexState?.active_generation) {
+      const row = db.prepare('SELECT config_json FROM repositories WHERE id = ?').get(repo.id) as { config_json: string } | undefined;
+      const note = row && (JSON.parse(row.config_json) as { weftOnboardingNote?: string }).weftOnboardingNote;
+      if (note) return { content: [{ type: 'text', text: note }], isError: false };
+    }
     let value: unknown;
     if (name === 'weft_search') {
       const query = requiredString(args, 'query'); const limit = Number(args.limit ?? 10);
@@ -54,7 +66,7 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
   };
 }
 
-export function serveMcp(db: Database.Database, repo: { id: string; rootPath: string }, streams = { input: process.stdin, output: process.stdout }): void {
+export function serveMcp(db: Database.Database, repo: { id: string; rootPath: string } | null, streams = { input: process.stdin, output: process.stdout }): void {
   const handle = createMcpHandler(db, repo); const lines = createInterface({ input: streams.input });
   lines.on('line', async (line) => {
     let message: { id?: unknown; method?: string; params?: Args };

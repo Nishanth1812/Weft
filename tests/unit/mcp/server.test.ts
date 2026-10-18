@@ -1,7 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { getGitRoot } from '../../../src/core/gitstate/gitRunner.js';
 import { openDatabase } from '../../../src/storage/db.js';
 import { migrate } from '../../../src/storage/migrator.js';
-import { createMcpHandler } from '../../../src/mcp/server.js';
+import { createMcpHandler, findMcpRepo } from '../../../src/mcp/server.js';
 
 const db = openDatabase(':memory:');
 migrate(db);
@@ -31,6 +36,25 @@ describe('MCP server', () => {
     const result = await handle('tools/call', { name: 'weft_read', arguments: { path: 'secret.ts', startLine: 2, endLine: 2 } });
     expect(JSON.stringify(result)).toContain('second line');
     expect(JSON.stringify(result)).not.toContain('third line');
+  });
+
+  it('returns a clear message when the MCP server cwd is outside a Git repository', async () => {
+    const handle = createMcpHandler(db, null);
+    const result = await handle('tools/call', { name: 'weft_search', arguments: { query: 'anything' } });
+    expect(JSON.stringify(result)).toContain('Start the harness from inside a Git workspace');
+  });
+
+  it('resolves the MCP repository from a nested server cwd to its Git root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'weft-mcp-cwd-'));
+    try {
+      const nested = join(root, 'nested'); await mkdir(nested);
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('nested-repo', root, 'nested', new Date().toISOString(), new Date().toISOString());
+      expect(findMcpRepo(db, (await getGitRoot(nested))!)).toEqual({ id: 'nested-repo', rootPath: root });
+    } finally {
+      db.prepare('DELETE FROM repositories WHERE id = ?').run('nested-repo');
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
