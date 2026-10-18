@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { getUserPaths } from '../config/paths.js';
 import { openDatabase } from '../storage/db.js';
 import { migrate } from '../storage/migrator.js';
-import { resumeTask, saveCheckpoint } from '../memory/taskManager.js';
+import { latestVerification, resumeTask, saveCheckpoint } from '../memory/taskManager.js';
 import { runGit, type WorkingTreeStatus } from '../core/gitstate/gitRunner.js';
 import { computeWorkingTreeFingerprint } from '../core/fingerprint/hasher.js';
 import { estimateTokens } from '../core/estimate/tokenEstimator.js';
@@ -67,7 +67,7 @@ function latestTask(db: Database.Database, repoId: string) {
   return db.prepare("SELECT id, title FROM tasks WHERE repo_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1").get(repoId) as { id: string; title: string } | undefined;
 }
 
-export async function runSessionStartHook(options: { cwd?: string; stateDir: string; gitState?: GitState; gitRoot?: (cwd: string) => Promise<string | null>; writeIndexMarker?: boolean } ): Promise<string> {
+export async function runSessionStartHook(options: { cwd?: string; stateDir: string; gitState?: GitState; gitRoot?: (cwd: string) => Promise<string | null>; writeIndexMarker?: boolean; disableDetachedIndex?: boolean } ): Promise<string> {
   const result = await runHookSafely(async () => {
     const cwd = resolve(options.cwd ?? process.cwd());
     const root = await (options.gitRoot ?? hookGitRoot)(cwd);
@@ -83,7 +83,7 @@ export async function runSessionStartHook(options: { cwd?: string; stateDir: str
       const marker = join(options.stateDir, `hook-head-${createHash('sha1').update(repo.id).digest('hex')}`);
       const previousHead = existsSync(marker) ? await readFile(marker, 'utf8').catch(() => '') : '';
       // Reindex in a detached child: awaiting it here kept the hook alive ~500ms on every session start.
-      if (headId && previousHead !== headId && options.writeIndexMarker !== false && process.argv[1]) {
+      if (headId && previousHead !== headId && options.writeIndexMarker !== false && !options.disableDetachedIndex && process.argv[1]) {
         spawn(process.execPath, [process.argv[1], 'index', repo.id], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
         await writeFile(marker, headId, 'utf8').catch(() => undefined);
       }
@@ -93,7 +93,18 @@ export async function runSessionStartHook(options: { cwd?: string; stateDir: str
       if (task) {
         const resumed = resumeTask(db, task.id, fingerprint);
         const checkpoint = resumed.checkpoint;
-        if (checkpoint) lines.push(`Task resume: ${redactSafe(checkpoint.objective || task.title)}${resumed.isStale ? ' (checkpoint may be stale; Git state changed)' : ''}${checkpoint.nextAction ? ` — ${redactSafe(checkpoint.nextAction)}` : ''}`);
+        if (checkpoint) {
+          const objective = (checkpoint.objective || task.title).replace(/\s+/g, ' ').slice(0, 100);
+          lines.push(`Resume: ${redactSafe(objective)}${resumed.isStale ? ' (stale)' : ''}`);
+          if (checkpoint.nextAction) lines.push(`Next: ${redactSafe(checkpoint.nextAction.replace(/\s+/g, ' ').slice(0, 100))}`);
+          const verification = latestVerification(db, task.id);
+          if (verification) lines.push(`Tests: ${verification.exitCode === 0 ? 'passed' : `FAILED (exit ${verification.exitCode})`} ${verification.command.slice(0, 100)}`);
+          const checkpointFiles = checkpoint.decisions.flatMap((decision) => {
+            try { const parsed = JSON.parse(decision) as { changedFiles?: string[] }; return parsed.changedFiles ?? []; } catch { return []; }
+          });
+          const files = [...new Set([...status.staged, ...status.unstaged, ...status.untracked, ...checkpointFiles])].slice(0, 3);
+          if (files.length) lines.push(`Files: ${files.join(', ')}`);
+        }
       }
       lines.push('Weft tools: weft_* MCP tools and `weft context` are available.');
       let output = lines.join('\n');
@@ -121,8 +132,10 @@ export async function runCheckpointHook(options: { cwd?: string; stateDir: strin
         const fingerprint = computeWorkingTreeFingerprint(status, headId, status.branch);
         const previous = db.prepare('SELECT working_tree_fingerprint AS fingerprint, revision FROM checkpoints WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(task.id) as { fingerprint: string; revision: string | null } | undefined;
         if (previous?.fingerprint === fingerprint && previous.revision === headId) return;
-        const details = redactSafe(JSON.stringify({ branch: status.branch, changedFiles: [...status.staged, ...status.unstaged, ...status.untracked], lastCommit: headId }));
-        saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: fingerprint, revision: headId, objective: '', status: 'active', findings: [], decisions: [details], verification: [], nextAction: '' });
+        const changedFiles = [...new Set([...status.staged, ...status.unstaged, ...status.untracked])];
+        const verification = latestVerification(db, task.id);
+        const details = redactSafe(JSON.stringify({ branch: status.branch, changedFiles, lastCommit: headId }));
+        saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: fingerprint, revision: headId, objective: '', status: 'active', findings: [], decisions: [details], verification: verification ? [{ command: verification.command, result: verification.exitCode === 0 ? 'passed' : `failed (exit ${verification.exitCode})`, at: verification.ranAt }] : [], nextAction: '' });
       } finally { db.close(); }
     } catch { /* Hooks must never interrupt the agent. */ }
   }, 430);

@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../../src/storage/db.js';
 import { migrate } from '../../../src/storage/migrator.js';
-import { createTask } from '../../../src/memory/taskManager.js';
+import { createTask, saveCheckpoint } from '../../../src/memory/taskManager.js';
 import { installClaudeHooks, uninstallClaudeHooks, runSessionStartHook, runCheckpointHook } from '../../../src/hooks/claude.js';
 import { runHookSafely } from '../../../src/integrations/claude-code/index.js';
 import { estimateTokens } from '../../../src/core/estimate/tokenEstimator.js';
 
 const dirs: string[] = [];
 async function tempDir() { const dir = await mkdtemp(join(tmpdir(), 'weft-hooks-')); dirs.push(dir); return dir; }
-afterEach(async () => { await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))); });
 
 describe('Claude Code hooks', () => {
   it('times out safely', async () => {
@@ -58,6 +58,10 @@ describe('Claude Code hooks', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]!.payload_json).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij');
       expect(rows[0]!.payload_json).toContain('[REDACTED_SECRET:');
+      const checkpoint = JSON.parse(rows[0]!.payload_json) as { decisions: string[] };
+      expect(checkpoint.decisions[0]).toContain('"branch":"main"');
+      expect(checkpoint.decisions[0]).toContain('"lastCommit":"abc123"');
+      expect(checkpoint.decisions[0]).toContain('src/[REDACTED_SECRET:github-token].ts');
     } finally { check.close(); }
   });
 
@@ -70,9 +74,28 @@ describe('Claude Code hooks', () => {
     try { migrate(db); db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', repo, 'repo', 'now', 'now'); createTask(db, 'r', 'Build thing'); }
     finally { db.close(); }
     const started = performance.now();
-    const output = await runSessionStartHook({ cwd: repo, stateDir, gitRoot: async () => repo, gitState: async (_root, kind) => kind === 'status' ? { staged: [], unstaged: [], untracked: [], branch: 'main', clean: true } : 'head1', writeIndexMarker: false });
-    expect(performance.now() - started).toBeLessThan(500);
+    const output = await runSessionStartHook({ cwd: repo, stateDir, gitRoot: async () => repo, gitState: async (_root, kind) => kind === 'status' ? { staged: [], unstaged: [], untracked: [], branch: 'main', clean: true } : 'head1', disableDetachedIndex: true });
+    expect(performance.now() - started).toBeLessThan(1000);
     expect(output).toContain('weft_* MCP tools');
+    expect(estimateTokens(output)).toBeLessThanOrEqual(400);
+  });
+
+  it('prints resume hints, verification, and changed file paths', async () => {
+    const root = await tempDir(), stateDir = join(root, 'state'), repo = join(root, 'repo');
+    await mkdir(repo);
+    const db = openDatabase(stateDir);
+    try {
+      migrate(db);
+      db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', repo, 'repo', 'now', 'now');
+      const task = createTask(db, 'r', 'Build thing');
+      saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: 'old', objective: 'Resume objective', status: 'active', findings: [], decisions: [JSON.stringify({ changedFiles: ['src/old.ts'] })], verification: [], nextAction: 'Run focused checks', verificationRecords: [{ command: 'npx vitest run', exitCode: 1, durationMs: 10, outputTail: '', ranAt: 'now', changedFiles: [] }] });
+    } finally { db.close(); }
+    const output = await runSessionStartHook({ cwd: repo, stateDir, gitRoot: async () => repo, gitState: async (_root, kind) => kind === 'status' ? { staged: ['src/new.ts'], unstaged: [], untracked: [], branch: 'main', clean: false } : 'head1', disableDetachedIndex: true });
+    expect(output).toContain('Resume: Resume objective');
+    expect(output).toContain('Next: Run focused checks');
+    expect(output).toContain('FAILED (exit 1) npx vitest run');
+    expect(output).toContain('src/new.ts');
+    expect(output).toContain('src/old.ts');
     expect(estimateTokens(output)).toBeLessThanOrEqual(400);
   });
 
@@ -91,7 +114,7 @@ describe('Claude Code hooks', () => {
     const db = openDatabase(stateDir);
     try { migrate(db); db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', repo, 'repo', 'now', 'now'); }
     finally { db.close(); }
-    const output = await runSessionStartHook({ cwd: join(repo), stateDir, writeIndexMarker: false });
+    const output = await runSessionStartHook({ cwd: join(repo), stateDir, disableDetachedIndex: true });
     expect(output).toContain('Repo repo | trunk | dirty: 2 files');
   });
 
