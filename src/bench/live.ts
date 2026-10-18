@@ -49,8 +49,9 @@ function usage(output: string): { tokens?: number; costMicros?: number } {
   try {
     const json = JSON.parse(output) as Record<string, unknown>;
     const usage = (json.usage && typeof json.usage === 'object' ? json.usage : json) as Record<string, unknown>;
-    const tokens = Number(usage.total_tokens ?? usage.totalTokens ?? (Number(usage.input_tokens ?? usage.inputTokens ?? 0) + Number(usage.output_tokens ?? usage.outputTokens ?? 0)));
-    const cost = Number(usage.cost_usd ?? usage.costUsd ?? json.cost_usd ?? json.costUsd);
+    // Claude reports cached input separately and the cost as total_cost_usd.
+    const tokens = Number(usage.total_tokens ?? usage.totalTokens ?? (Number(usage.input_tokens ?? usage.inputTokens ?? 0) + Number(usage.output_tokens ?? usage.outputTokens ?? 0) + Number(usage.cache_creation_input_tokens ?? 0) + Number(usage.cache_read_input_tokens ?? 0)));
+    const cost = Number(usage.cost_usd ?? usage.costUsd ?? json.cost_usd ?? json.costUsd ?? json.total_cost_usd);
     return { ...(Number.isFinite(tokens) && tokens > 0 ? { tokens } : {}), ...(Number.isFinite(cost) && cost >= 0 ? { costMicros: Math.round(cost * 1_000_000) } : {}) };
   } catch { return {}; }
 }
@@ -74,6 +75,8 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
       await applySuitePatches(repo, task.setup);
       await removeWeftSetup(repo);
       if (condition !== 'A') await syncClaudeInstructions(repo, CLAUDE_CODE_GUIDELINES);
+      // Harnesses pass --strict-mcp-config --mcp-config .mcp.json, so A and B get an explicitly empty server list.
+      if (condition !== 'C') await writeFile(join(repo, '.mcp.json'), '{"mcpServers":{}}\n', 'utf8');
       if (condition === 'C') {
         await installMcpConfig('claude-code', { home: work, project: repo });
         const localAppData = join(work, 'weft-local');
