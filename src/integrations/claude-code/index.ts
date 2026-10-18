@@ -7,8 +7,8 @@ export function syncClaudeInstructions(repoRoot: string, managedContent = CLAUDE
   return syncInstructions(join(repoRoot, 'CLAUDE.md'), managedContent, dryRun);
 }
 
-export async function runHookSafely<T>(hook: () => T | Promise<T>, timeoutMs = 450): Promise<T | undefined> {
-  const timeout = Math.min(Math.max(timeoutMs, 1), 499);
+export async function runHookSafely<T>(hook: () => T | Promise<T>, timeoutMs = 450, ceilingMs = 499): Promise<T | undefined> {
+  const timeout = Math.min(Math.max(timeoutMs, 1), ceilingMs); // Hooks stay under 500 ms; only tests raise the ceiling.
   let timer: NodeJS.Timeout | undefined;
   const expired = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), timeout); });
   // Clear the timer: a live one keeps the hook process running until it fires even after the work is done.

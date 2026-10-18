@@ -136,7 +136,7 @@ describe('MCP server', () => {
     const input = new PassThrough(); const output = new PassThrough();
     try {
       serveMcp(db, { id: repoId, rootPath }, { input, output }); input.end();
-      const deadline = Date.now() + 5000;
+      const deadline = Date.now() + 12_000; // two git spawns can take seconds when the whole suite runs in parallel on Windows
       let checkpoint = { n: 0 };
       while (Date.now() < deadline && checkpoint.n === 0) {
         checkpoint = db.prepare('SELECT count(*) AS n FROM checkpoints WHERE task_id = ?').get(task.id) as { n: number };

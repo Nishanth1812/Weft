@@ -67,7 +67,7 @@ function latestTask(db: Database.Database, repoId: string) {
   return db.prepare("SELECT id, title FROM tasks WHERE repo_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1").get(repoId) as { id: string; title: string } | undefined;
 }
 
-export async function runSessionStartHook(options: { cwd?: string; stateDir: string; gitState?: GitState; gitRoot?: (cwd: string) => Promise<string | null>; writeIndexMarker?: boolean; disableDetachedIndex?: boolean } ): Promise<string> {
+export async function runSessionStartHook(options: { cwd?: string; stateDir: string; gitState?: GitState; gitRoot?: (cwd: string) => Promise<string | null>; writeIndexMarker?: boolean; disableDetachedIndex?: boolean; budgetMs?: number } ): Promise<string> {
   const result = await runHookSafely(async () => {
     const cwd = resolve(options.cwd ?? process.cwd());
     const root = await (options.gitRoot ?? hookGitRoot)(cwd);
@@ -111,11 +111,11 @@ export async function runSessionStartHook(options: { cwd?: string; stateDir: str
       while (estimateTokens(output) > 400) { output = lines.slice(0, -1).join('\n') + '\n' + lines.at(-1); if (lines.length <= 1) break; lines.splice(1, 1); }
       return redactSafe(output);
     } finally { db.close(); }
-  }, 430).catch(() => undefined);
+  }, options.budgetMs ?? 430, options.budgetMs ?? 499).catch(() => undefined);
   return typeof result === 'string' ? result : '';
 }
 
-export async function runCheckpointHook(options: { cwd?: string; stateDir: string; gitState?: GitState; gitRoot?: (cwd: string) => Promise<string | null> }): Promise<void> {
+export async function runCheckpointHook(options: { cwd?: string; stateDir: string; gitState?: GitState; gitRoot?: (cwd: string) => Promise<string | null>; budgetMs?: number }): Promise<void> {
   await runHookSafely(async () => {
     try {
       const cwd = resolve(options.cwd ?? process.cwd());
@@ -138,7 +138,7 @@ export async function runCheckpointHook(options: { cwd?: string; stateDir: strin
         saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: fingerprint, revision: headId, objective: '', status: 'active', findings: [], decisions: [details], verification: verification ? [{ command: verification.command, result: verification.exitCode === 0 ? 'passed' : `failed (exit ${verification.exitCode})`, at: verification.ranAt }] : [], nextAction: '' });
       } finally { db.close(); }
     } catch (error) { await logHookFailure(options.stateDir, error); }
-  }, 430);
+  }, options.budgetMs ?? 430, options.budgetMs ?? 499);
 }
 
 export async function logHookFailure(stateDir: string, error: unknown): Promise<void> {

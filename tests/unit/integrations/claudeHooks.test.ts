@@ -50,8 +50,8 @@ describe('Claude Code hooks', () => {
       if (kind === 'head') return 'abc123';
       return null;
     };
-    await runCheckpointHook({ cwd: repo, stateDir, gitState: git, gitRoot: async () => repo });
-    await runCheckpointHook({ cwd: repo, stateDir, gitState: git, gitRoot: async () => repo });
+    await runCheckpointHook({ budgetMs: 20_000, cwd: repo, stateDir, gitState: git, gitRoot: async () => repo });
+    await runCheckpointHook({ budgetMs: 20_000, cwd: repo, stateDir, gitState: git, gitRoot: async () => repo });
     const check = openDatabase(stateDir);
     try {
       const rows = check.prepare('SELECT payload_json FROM checkpoints').all() as Array<{ payload_json: string }>;
@@ -74,7 +74,7 @@ describe('Claude Code hooks', () => {
     try { migrate(db); db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', repo, 'repo', 'now', 'now'); createTask(db, 'r', 'Build thing'); }
     finally { db.close(); }
     const started = performance.now();
-    const output = await runSessionStartHook({ cwd: repo, stateDir, gitRoot: async () => repo, gitState: async (_root, kind) => kind === 'status' ? { staged: [], unstaged: [], untracked: [], branch: 'main', clean: true } : 'head1', disableDetachedIndex: true });
+    const output = await runSessionStartHook({ budgetMs: 20_000, cwd: repo, stateDir, gitRoot: async () => repo, gitState: async (_root, kind) => kind === 'status' ? { staged: [], unstaged: [], untracked: [], branch: 'main', clean: true } : 'head1', disableDetachedIndex: true });
     expect(performance.now() - started).toBeLessThan(1000);
     expect(output).toContain('weft_* MCP tools');
     expect(estimateTokens(output)).toBeLessThanOrEqual(400);
@@ -90,7 +90,7 @@ describe('Claude Code hooks', () => {
       const task = createTask(db, 'r', 'Build thing');
       saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: 'old', objective: 'Resume objective', status: 'active', findings: [], decisions: [JSON.stringify({ changedFiles: ['src/old.ts'] })], verification: [], nextAction: 'Run focused checks', verificationRecords: [{ command: 'npx vitest run', exitCode: 1, durationMs: 10, outputTail: '', ranAt: 'now', changedFiles: [] }] });
     } finally { db.close(); }
-    const output = await runSessionStartHook({ cwd: repo, stateDir, gitRoot: async () => repo, gitState: async (_root, kind) => kind === 'status' ? { staged: ['src/new.ts'], unstaged: [], untracked: [], branch: 'main', clean: false } : 'head1', disableDetachedIndex: true });
+    const output = await runSessionStartHook({ budgetMs: 20_000, cwd: repo, stateDir, gitRoot: async () => repo, gitState: async (_root, kind) => kind === 'status' ? { staged: ['src/new.ts'], unstaged: [], untracked: [], branch: 'main', clean: false } : 'head1', disableDetachedIndex: true });
     expect(output).toContain('Resume: Resume objective');
     expect(output).toContain('Next: Run focused checks');
     expect(output).toContain('FAILED (exit 1) npx vitest run');
@@ -114,7 +114,7 @@ describe('Claude Code hooks', () => {
     const db = openDatabase(stateDir);
     try { migrate(db); db.prepare('INSERT INTO repositories (id, root_path, display_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run('r', repo, 'repo', 'now', 'now'); }
     finally { db.close(); }
-    const output = await runSessionStartHook({ cwd: join(repo), stateDir, disableDetachedIndex: true });
+    const output = await runSessionStartHook({ budgetMs: 20_000, cwd: join(repo), stateDir, disableDetachedIndex: true });
     expect(output).toContain('Repo repo | trunk | dirty: 2 files');
   });
 

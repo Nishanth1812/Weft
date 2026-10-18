@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
 import { createInterface } from 'node:readline';
 import { realpath, readFile, stat } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { logHookFailure } from '../hooks/claude.js';
 import { redactSafe } from '../core/security/redactor.js';
 import { isSensitivePath } from '../core/security/paths.js';
 import { estimateTokens } from '../core/estimate/tokenEstimator.js';
@@ -155,7 +156,7 @@ export function serveMcp(db: Database.Database, repo: { id: string; rootPath: st
         if (prev?.fingerprint === fingerprint) return;
         saveCheckpoint(db, { taskId: task.id, workingTreeFingerprint: fingerprint, revision: head, objective: '', status: 'active', findings: [], decisions: [JSON.stringify({ changedFiles: [...git.staged, ...git.unstaged, ...git.untracked] })], verification: [], nextAction: '' });
       }), new Promise<void>(resolve => { timer = setTimeout(resolve, 1500); })]);
-    } catch { /* Process shutdown must not wait for checkpointing. */ }
+    } catch (error) { if (db.name !== ':memory:') await logHookFailure(dirname(db.name), error); } // Shutdown must not fail or wait on checkpointing.
     finally { if (timer) clearTimeout(timer); }
   };
   lines.once('close', autoCheckpoint);
