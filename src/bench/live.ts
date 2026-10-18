@@ -35,6 +35,7 @@ async function removeWeftSetup(repo: string): Promise<void> {
 
 export interface SuitePatch { path: string; from: string; to: string }
 export type SuiteTask = TaskDefinition & { prompt: string; setup?: SuitePatch[]; solution?: SuitePatch[]; estimatedTokens?: number };
+const RETRY_WAITS_MS = process.env.WEFT_BENCH_RETRY_WAITS_MS ? process.env.WEFT_BENCH_RETRY_WAITS_MS.split(',').map(Number) : [30_000, 120_000, 300_000];
 function execute(command: string, cwd: string, env = process.env): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, { cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -99,12 +100,19 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
         await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
       }
       const prompt = task.prompt.replaceAll('{condition}', condition).replaceAll('{repoPath}', repo);
-      const harness = await execute(harnessTemplate.replaceAll('{prompt}', JSON.stringify(prompt)).replaceAll('{repoPath}', JSON.stringify(repo)), repo);
+      const command = harnessTemplate.replaceAll('{prompt}', JSON.stringify(prompt)).replaceAll('{repoPath}', JSON.stringify(repo));
+      // A harness that cannot start (rate or usage limit, network) says nothing about the task: back off and retry before recording a failure.
+      let harness = await execute(command, repo);
+      for (const wait of RETRY_WAITS_MS) {
+        if (harness.code === 0) break;
+        await new Promise((done) => setTimeout(done, wait));
+        harness = await execute(command, repo);
+      }
       const parsed = usage(harness.stdout);
       const test = harness.code === 0 ? await execute(task.testCommand, repo) : { code: 1, stdout: '', stderr: harness.stderr };
       const success = harness.code === 0 && test.code === 0;
       const tokensUsed = parsed.tokens ?? estimateTokens(prompt + harness.stdout);
-      return { success, durationMs: Date.now() - started, tokensUsed, costMicros: parsed.costMicros ?? 0, tokenProvenance: parsed.tokens !== undefined ? 'provider_reported' as const : 'estimated' as const, costProvenance: parsed.costMicros !== undefined ? 'provider_reported' as const : 'estimated' as const, ...(!success ? { error: harness.stderr || test.stderr || `Harness or test command failed (${harness.code}/${test.code}).` } : {}) };
+      return { success, durationMs: Date.now() - started, tokensUsed, costMicros: parsed.costMicros ?? 0, tokenProvenance: parsed.tokens !== undefined ? 'provider_reported' as const : 'estimated' as const, costProvenance: parsed.costMicros !== undefined ? 'provider_reported' as const : 'estimated' as const, ...(!success ? { error: harness.stderr || (harness.code !== 0 ? harness.stdout.slice(0, 300) : '') || test.stderr || `Harness or test command failed (${harness.code}/${test.code}).`, ...(harness.code !== 0 ? { infrastructure: true } : {}) } : {}) };
     } finally { await rm(work, { recursive: true, force: true }); }
   } })), conditions);
 }

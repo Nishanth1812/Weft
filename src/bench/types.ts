@@ -23,6 +23,7 @@ export interface TrialExecution {
   tokenProvenance?: 'provider_reported' | 'estimated';
   costProvenance?: 'provider_reported' | 'estimated';
   error?: string;
+  infrastructure?: boolean;
 }
 
 export type BenchmarkTask = TaskDefinition & {
