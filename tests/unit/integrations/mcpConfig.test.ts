@@ -15,7 +15,7 @@ describe('MCP harness config', () => {
     await expect(readFile(preview.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     const first = await installMcpConfig('opencode', { home });
     const existing = JSON.parse(await readFile(first.path, 'utf8'));
-    expect(existing.mcp.weft.command).toEqual(['ctx', 'mcp', 'serve']);
+    expect(existing.mcp.weft.command).toEqual(['weft', 'mcp', 'serve']);
     expect((await installMcpConfig('opencode', { home })).modified).toBe(false);
   });
 

@@ -15,7 +15,7 @@
 
 Weft is a lightweight, local-first developer productivity layer engineered to maximize **correct, verified engineering work per unit of AI cost**. It acts as a companion and accelerator to existing coding harnesses (T3 Code, OpenCode, Codex, Claude Code) rather than competing with them or introducing another autonomous agent runtime.
 
-By absorbing the deterministic assets of **DevPulse** (regex secret scanner, sensitive path definitions, PII redaction vault, multi-repo registry, and deterministic repository health checks) and merging them into Weft's deterministic architecture (incremental lexical indexing, SQLite FTS5 search, hard-budget context retrieval, evidence-backed checkpoints, and cache/cost telemetry), Weft provides a single, cohesive developer tool (`ctx`).
+By absorbing the deterministic assets of **DevPulse** (regex secret scanner, sensitive path definitions, PII redaction vault, multi-repo registry, and deterministic repository health checks) and merging them into Weft's deterministic architecture (incremental lexical indexing, SQLite FTS5 search, hard-budget context retrieval, evidence-backed checkpoints, and cache/cost telemetry), Weft provides a single, cohesive developer tool (`weft`).
 
 ### 1.1 The Core Formula
 $$\text{Productivity Efficiency} = \frac{\text{Correct, Verified Engineering Tasks Completed}}{\text{Total AI Costs (Provider API Charges + Token Spend + Engineering Latency)}}$$
@@ -56,7 +56,7 @@ Weft is structured into clear separation-of-concerns layers to ensure testabilit
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
-│                              CLI Interface (`ctx`)                          │
+│                              CLI Interface (`weft`)                          │
 │                            (src/cli/commands/*)                             │
 │   • Command taxonomy           • Exit codes (0–6)     • JSON envelope       │
 └──────────────────────────────────────┬──────────────────────────────────────┘
@@ -353,7 +353,7 @@ CREATE TABLE migration_ledger (
 - **Single-Writer Constraint:** Writes use short-lived transactions wrapped in immediate write locks. Reading processes query existing `ready` index generations concurrently via WAL mode.
 - **Atomic Index Swaps:** An indexing pass stages all files, symbols, and chunks under a new `building` generation. Only upon complete, error-free parsing does a transaction set `status = 'ready'` and update `repo_index_state.active_generation`. Failed or aborted index passes leave the previous generation untouched.
 - **Retention Rules:**
-  - Inactive index generations older than 7 days are automatically pruned during `ctx clean`.
+  - Inactive index generations older than 7 days are automatically pruned during `weft clean`.
   - Usage events are retained for 90 days by default.
   - Checkpoints are retained indefinitely unless deleted explicitly by the user.
 
@@ -511,7 +511,7 @@ Checkpoints are stored in `tasks` and `checkpoints` tables. A checkpoint contain
 6. **Working Tree Fingerprint:** Hash of Git status at the time of checkpointing.
 
 ### 7.2 Staleness Detection
-When `ctx task resume <id>` is called:
+When `weft task resume <id>` is called:
 1. The current working-tree fingerprint is computed.
 2. If the current Git commit or dirty file hashes differ from the checkpoint:
    - Checkpoint evidence matching modified files is flagged as `STALE_EVIDENCE`.
@@ -528,37 +528,37 @@ Ported from DevPulse (`goals.md`), Weft establishes a durable, user-owned intent
 
 ## 8. CLI Contract & UX Taxonomy
 
-The public CLI command is `ctx`. The CLI implements a unified taxonomy resolving all naming drift between Weft and DevPulse specifications.
+The public CLI command is `weft`. The CLI implements a unified taxonomy resolving all naming drift between Weft and DevPulse specifications.
 
 ### 8.1 Command Taxonomy Table
 
 | Command Group | Command | Description | Key Flags |
 |---|---|---|---|
-| **System** | `ctx init` | Initialize global directories, config, and SQLite migrations | `--force` |
-| | `ctx doctor` | Check runtime, database integrity, git, and adapters | `--repair` |
-| **Instructions** | `ctx instructions sync` | Synchronize managed instruction blocks across harnesses | `--dry-run` |
-| | `ctx instructions check`| Read-only check for configuration drift in harnesses | `--json` |
-| **Repositories** | `ctx repos register` | Register a Git repository in the local registry | `[path]`, `--name <NAME>` |
-| | `ctx repos unregister` | Unregister a repository from the registry | `<repo>`, `--force`, `--keep-data` |
-| | `ctx repos list` | List all registered repositories | `--json` |
-| | `ctx repos status` | Display Git branch, dirty files, and index generation | `[repo]` |
-| | `ctx repos fuzzy` | Inspectable fuzzy resolution for repository names | `<query>` |
-| **Index & Search** | `ctx index` | Incrementally index repository files, symbols, chunks | `[repo]`, `--force` |
-| | `ctx search` | Fast lexical search across indexed files and symbols | `<query>`, `[repo]`, `--limit <N>` |
-| | `ctx context` | Assemble bounded context package within token budget | `<query>`, `--budget <N>`, `[repo]` |
-| **Task Memory** | `ctx task start` | Start a new tracked development task | `<title>`, `[repo]` |
-| | `ctx task resume` | Display task state, verifying checkpoint freshness | `<id>` |
-| | `ctx checkpoint` | Record verified objective, findings, and next steps | `<id>`, `--interactive` |
-| **Intent** | `ctx intent show` | Parse and display structured goals from `intent.md` | `--json` |
-| | `ctx intent edit` | Open user-owned `intent.md` in `$EDITOR` | |
-| **Health** | `ctx health` | Deterministic health check (unmerged branches, staleness) | `[repo]` |
-| | `ctx portfolio` | Portfolio summary across all registered repositories | `--json` |
-| **Telemetry** | `ctx costs` | Aggregated token spend and costs (alias: `ctx stats`) | `--since <DUR>`, `--by <DIM>` |
-| | `ctx cache` | Cache hit diagnostics and token savings breakdown | `--since <DUR>` |
-| | `ctx sessions` | List recorded sessions with provenance tags | `--limit <N>`, `--json` |
-| **Benchmarking** | `ctx bench` | Run or report scientific A/B benchmark suites | `run`, `report`, `--suite <S>` |
-| **Maintenance** | `ctx clean` | Prune old index generations and vacuum database | `--scope <S>`, `--dry-run`, `--yes` |
-| **Migration** | `ctx migrate devpulse`| Non-destructive migration of DevPulse config and notes | `--source <PATH>`, `--dry-run` |
+| **System** | `weft init` | Initialize global directories, config, and SQLite migrations | `--force` |
+| | `weft doctor` | Check runtime, database integrity, git, and adapters | `--repair` |
+| **Instructions** | `weft instructions sync` | Synchronize managed instruction blocks across harnesses | `--dry-run` |
+| | `weft instructions check`| Read-only check for configuration drift in harnesses | `--json` |
+| **Repositories** | `weft repos register` | Register a Git repository in the local registry | `[path]`, `--name <NAME>` |
+| | `weft repos unregister` | Unregister a repository from the registry | `<repo>`, `--force`, `--keep-data` |
+| | `weft repos list` | List all registered repositories | `--json` |
+| | `weft repos status` | Display Git branch, dirty files, and index generation | `[repo]` |
+| | `weft repos fuzzy` | Inspectable fuzzy resolution for repository names | `<query>` |
+| **Index & Search** | `weft index` | Incrementally index repository files, symbols, chunks | `[repo]`, `--force` |
+| | `weft search` | Fast lexical search across indexed files and symbols | `<query>`, `[repo]`, `--limit <N>` |
+| | `weft context` | Assemble bounded context package within token budget | `<query>`, `--budget <N>`, `[repo]` |
+| **Task Memory** | `weft task start` | Start a new tracked development task | `<title>`, `[repo]` |
+| | `weft task resume` | Display task state, verifying checkpoint freshness | `<id>` |
+| | `weft checkpoint` | Record verified objective, findings, and next steps | `<id>`, `--interactive` |
+| **Intent** | `weft intent show` | Parse and display structured goals from `intent.md` | `--json` |
+| | `weft intent edit` | Open user-owned `intent.md` in `$EDITOR` | |
+| **Health** | `weft health` | Deterministic health check (unmerged branches, staleness) | `[repo]` |
+| | `weft portfolio` | Portfolio summary across all registered repositories | `--json` |
+| **Telemetry** | `weft costs` | Aggregated token spend and costs (alias: `weft stats`) | `--since <DUR>`, `--by <DIM>` |
+| | `weft cache` | Cache hit diagnostics and token savings breakdown | `--since <DUR>` |
+| | `weft sessions` | List recorded sessions with provenance tags | `--limit <N>`, `--json` |
+| **Benchmarking** | `weft bench` | Run or report scientific A/B benchmark suites | `run`, `report`, `--suite <S>` |
+| **Maintenance** | `weft clean` | Prune old index generations and vacuum database | `--scope <S>`, `--dry-run`, `--yes` |
+| **Migration** | `weft migrate devpulse`| Non-destructive migration of DevPulse config and notes | `--source <PATH>`, `--dry-run` |
 
 ### 8.2 Standardized Exit Codes
 Every command adheres strictly to the standardized exit-code contract:
@@ -614,13 +614,13 @@ Weft integrates with modern coding harnesses using each harness's native configu
 | **Claude Code** | `CLAUDE.md` / Post-command hooks | Compact instructions & checkpoint reminders | Hooks timeout safely in <500ms |
 
 ### 9.2 Safe Managed Instruction Synchronization
-When executing `ctx instructions sync`:
+When executing `weft instructions sync`:
 - Target files (`CLAUDE.md`, `AGENTS.md`, `.opencode/instructions.md`) are updated **only** within clearly delineated comment blocks:
   ```markdown
   <!-- BEGIN Weft MANAGED BLOCK -->
   # Weft Core Guidelines
-  - Run `ctx search <query>` before full repo grep.
-  - Save session state via `ctx checkpoint <id>`.
+  - Run `weft search <query>` before full repo grep.
+  - Save session state via `weft checkpoint <id>`.
   <!-- END Weft MANAGED BLOCK -->
   ```
 - Any content outside these markers is left 100% byte-identical.
@@ -673,12 +673,12 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
                                     │
 ┌───────────────────────────────────▼────────────────────────────────────┐
 │ Phase 4: Native Harness Integrations, Health & Portfolio View          │
-│          (OpenCode, Codex, Claude Code adapters, ctx health/portfolio) │
+│          (OpenCode, Codex, Claude Code adapters, weft health/portfolio) │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
 ┌───────────────────────────────────▼────────────────────────────────────┐
 │ Phase 5: Usage Telemetry, Cache Diagnostics & Cost Analytics           │
-│          (Event ingestion, provenance tracking, ctx costs/cache)       │
+│          (Event ingestion, provenance tracking, weft costs/cache)       │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
 ┌───────────────────────────────────▼────────────────────────────────────┐
@@ -687,7 +687,7 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
 ┌───────────────────────────────────▼────────────────────────────────────┐
-│ Phase 7: Release Hardening & `ctx migrate devpulse` Execution          │
+│ Phase 7: Release Hardening & `weft migrate devpulse` Execution          │
 │          (DevPulse import ledger, packaging, CI matrix, docs)          │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -716,10 +716,10 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
   - Implement cross-platform path resolution & atomic config writer: `src/config/paths.ts`, `src/config/manager.ts`.
   - Implement repository registry & fuzzy name resolver: `src/core/registry/repoRegistry.ts`.
   - Implement `intent.md` parser and template scaffold: `src/core/intents/intentParser.ts`.
-  - Implement commands: `ctx init`, `ctx doctor`, `ctx repos register/unregister/list/fuzzy`, `ctx intent show/edit`.
+  - Implement commands: `weft init`, `weft doctor`, `weft repos register/unregister/list/fuzzy`, `weft intent show/edit`.
 - **Exit Criteria:**
-  - `ctx init` creates user-level config and directories idempotently.
-  - `ctx repos register` deduplicates canonical paths across Windows and POSIX systems.
+  - `weft init` creates user-level config and directories idempotently.
+  - `weft repos register` deduplicates canonical paths across Windows and POSIX systems.
   - Intent parser correctly parses `Now / Next / Deadlines / Someday` with both `-` and `—` date delimiters.
 
 ### Phase 2: SQLite Storage Engine, Migrations & Incremental Indexer
@@ -731,7 +731,7 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
   - Implement incremental file tree walker respecting `.gitignore` and sensitive paths: `src/indexer/walker.ts`.
   - Implement file chunker and regex symbol extractor: `src/indexer/chunker.ts`, `src/indexer/symbols.ts`.
   - Implement atomic index generation publisher: `src/indexer/publisher.ts`.
-  - Implement command: `ctx index [repo] [--force]`.
+  - Implement command: `weft index [repo] [--force]`.
 - **Exit Criteria:**
   - Cold indexing of a 10,000-file repository completes in $<15$ seconds.
   - Incremental re-indexing with no file changes completes in $<1.0$ second.
@@ -746,7 +746,7 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
   - Implement hard-budget greedy context packer: `src/context/packer.ts`.
   - Implement task lifecycle and versioned checkpoint engine: `src/memory/taskManager.ts`.
   - Implement working-tree staleness detector: `src/memory/staleness.ts`.
-  - Implement commands: `ctx search`, `ctx context`, `ctx task start/resume`, `ctx checkpoint`.
+  - Implement commands: `weft search`, `weft context`, `weft task start/resume`, `weft checkpoint`.
 - **Exit Criteria:**
   - Context packaging strictly adheres to requested token budgets (2k/4k/8k) with zero budget overruns.
   - Deterministic search ordering across identical runs.
@@ -761,7 +761,7 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
   - Implement Claude Code `CLAUDE.md` sync and safe hook handlers: `src/integrations/claude-code/`.
   - Port DevPulse deterministic health rules (unmerged branches, stale branches >14 days, TODO/FIXME counters): `src/health/healthChecker.ts`.
   - Implement portfolio summary across all registered repositories: `src/health/portfolio.ts`.
-  - Implement commands: `ctx instructions sync/check`, `ctx health`, `ctx portfolio`.
+  - Implement commands: `weft instructions sync/check`, `weft health`, `weft portfolio`.
 - **Exit Criteria:**
   - Instruction sync modifies only delineated comment blocks, preserving user custom instructions.
   - Simulated harness hook timeout fails gracefully in $<500$ms without disrupting harness execution.
@@ -774,7 +774,7 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
   - Implement telemetry event ingestion pipeline: `src/telemetry/ingest.ts`.
   - Implement pricing table snapshots and micro-dollar arithmetic: `src/telemetry/pricing.ts`.
   - Implement cache diagnostic analyzer: `src/telemetry/cacheDiagnostics.ts`.
-  - Implement commands: `ctx costs` (alias `ctx stats`), `ctx cache`, `ctx sessions`.
+  - Implement commands: `weft costs` (alias `weft stats`), `weft cache`, `weft sessions`.
 - **Exit Criteria:**
   - Telemetry strictly separates `provider_reported` from `estimated` costs.
   - No prompt bodies, code snippets, or user credentials ever enter the telemetry tables.
@@ -790,23 +790,23 @@ The implementation roadmap harmonizes Weft's engineering phases with DevPulse's 
     - Condition A: Pure baseline harness (no Weft).
     - Condition B: Harness with Weft shared instructions.
     - Condition C: Harness with full Weft (instructions + index + context + checkpoints).
-  - Implement command: `ctx bench run/report`.
+  - Implement command: `weft bench run/report`.
 - **Exit Criteria:**
   - Benchmark reports compute $\frac{\text{Total Cost}}{\text{Successful Task}}$ with variance and confidence intervals.
   - Overhead of Weft indexing and retrieval is accurately subtracted from harness runtimes.
 
-### Phase 7: Release Hardening & `ctx migrate devpulse` Execution
+### Phase 7: Release Hardening & `weft migrate devpulse` Execution
 - **Duration:** 2–3 Days
 - **Prerequisites:** All prior phases complete.
 - **Work Packages:**
-  - Implement `ctx migrate devpulse`: `src/migration/devpulse/migrator.ts`.
+  - Implement `weft migrate devpulse`: `src/migration/devpulse/migrator.ts`.
   - Read `~/.devpulse/config.toml`, `goals.md`, and `notes/*.md`.
   - Populate `repositories`, `checkpoints`, and `intent.md` transactionally.
   - Verify import ledger prevents duplicate re-imports.
   - Conduct full security review and GPL-3.0 license validation.
   - Finalize npm packaging (`npm pack`), binary distributions, and documentation.
 - **Exit Criteria:**
-  - `ctx migrate devpulse --dry-run` accurately plans migration without writing to disk.
+  - `weft migrate devpulse --dry-run` accurately plans migration without writing to disk.
   - Re-running migration is a safe no-op.
   - Zero data loss: `~/.devpulse/` source directory is left untouched.
 
@@ -841,7 +841,7 @@ All integration and harness tests run entirely offline with mocked process bound
 
 ---
 
-## 13. `ctx migrate devpulse` Specification
+## 13. `weft migrate devpulse` Specification
 
 The migration utility provides a seamless, non-destructive bridge for existing DevPulse users.
 
@@ -871,7 +871,7 @@ The migration utility provides a seamless, non-destructive bridge for existing D
 ### 13.2 Safety Guarantees
 - The source `~/.devpulse/` directory is **never modified or deleted**.
 - If any transaction fails, SQLite rolls back completely.
-- Running `ctx migrate devpulse` repeatedly is idempotent: previously imported files recorded in `migration_ledger` are skipped.
+- Running `weft migrate devpulse` repeatedly is idempotent: previously imported files recorded in `migration_ledger` are skipped.
 
 ---
 
@@ -880,7 +880,7 @@ The migration utility provides a seamless, non-destructive bridge for existing D
 | Risk Event | Severity | Probability | Concrete Mitigation Strategy |
 |---|---|---|---|
 | **Secret scanner regex false negative** | Critical | Medium | Multi-layer defense: sensitive path denial *before* reading, regex scanning *before* storage, and output redaction *before* display. |
-| **Windows NTFS file locking / ACL mismatch** | High | High | Use Node-native path canonicalization (`fs.realpath`), forward-slash normalization, temporary file rename retries, and Windows ACL best-effort checks during `ctx doctor`. |
+| **Windows NTFS file locking / ACL mismatch** | High | High | Use Node-native path canonicalization (`fs.realpath`), forward-slash normalization, temporary file rename retries, and Windows ACL best-effort checks during `weft doctor`. |
 | **SQLite database lock contention** | High | Low | Enable WAL mode (`PRAGMA journal_mode=WAL`), busy timeout set to 5000ms, and keep index file parsing completely outside of database transactions. |
 | **Large repository indexing memory spike** | High | Medium | Hard file size cap (2 MB); stream large directories; use fast-path `mtime + size` check to avoid computing SHA-256 on unchanged files. |
 | **Host coding harness changes its API** | Medium | High | Adapters remain thin, modular, and optional. If a harness changes its schema, the adapter fails gracefully with a logged warning, allowing the developer to continue coding normally. |
@@ -899,19 +899,19 @@ To establish immediate project velocity, a newly onboarded engineer executes the
   - Validate with 100% passing tests on security fixtures.
 - **Day 2: Path Resolver, Config & CLI Skeleton**
   - Implement cross-platform path resolution and atomic config writer.
-  - Implement CLI router and commands: `ctx init`, `ctx doctor`.
+  - Implement CLI router and commands: `weft init`, `weft doctor`.
   - Validate idempotent directory and config generation.
 - **Day 3: Multi-Repo Registry & Safe Git Runner**
   - Implement SQLite database connection and Migration V1 schema.
-  - Implement `ctx repos register/unregister/list/fuzzy`.
+  - Implement `weft repos register/unregister/list/fuzzy`.
   - Implement bounded Git runner with timeout and disabled fsmonitor.
 - **Day 4: Incremental File Indexer & FTS5 Chunker**
   - Implement tree walker respecting `.gitignore` and sensitive paths.
   - Implement file chunker, regex symbol extractor, and FTS5 table population.
-  - Implement `ctx index` and verify $<1.0$s incremental no-change pass.
+  - Implement `weft index` and verify $<1.0$s incremental no-change pass.
 - **Day 5: Search, Hard-Budget Retrieval & Local Workflow Verification**
   - Implement BM25 lexical ranking and greedy context budget packer.
-  - Implement `ctx search` and `ctx context --budget 2048`.
+  - Implement `weft search` and `weft context --budget 2048`.
   - Run end-to-end verification of local indexing and retrieval workflow.
 
 ---

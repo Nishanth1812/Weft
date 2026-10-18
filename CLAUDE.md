@@ -1,5 +1,5 @@
 <!-- BEGIN WEFT MANAGED BLOCK -->
 # Weft Core Guidelines
-- Use `ctx search <query>` to find relevant code.
-- Save session state with `ctx checkpoint <id>`.
+- Use `weft search <query>` to find relevant code.
+- Save session state with `weft checkpoint <id>`.
 <!-- END WEFT MANAGED BLOCK -->

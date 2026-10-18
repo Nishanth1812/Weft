@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { syncInstructions } from '../instructions.js';
 
-export const CLAUDE_CODE_GUIDELINES = '# Weft Core Guidelines\n- Use `ctx search <query>` to find relevant code.\n- Save session state with `ctx checkpoint <id>`.';
+export const CLAUDE_CODE_GUIDELINES = '# Weft Core Guidelines\n- Use `weft search <query>` to find relevant code.\n- Save session state with `weft checkpoint <id>`.';
 
 export function syncClaudeInstructions(repoRoot: string, managedContent = CLAUDE_CODE_GUIDELINES, dryRun = false) {
   return syncInstructions(join(repoRoot, 'CLAUDE.md'), managedContent, dryRun);

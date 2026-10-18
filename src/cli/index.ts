@@ -8,9 +8,9 @@ import { formatContext, formatSearch } from './format.js';
 export interface CliIo { stdout: (text: string) => void; stderr: (text: string) => void }
 export interface CliResult { code: number; data?: unknown; warnings?: string[]; errors?: string[]; status?: string }
 
-const HELP = `ctx — local-first developer efficiency tools
+const HELP = `weft — local-first developer efficiency tools
 
-Usage: ctx <command> [options]
+Usage: weft <command> [options]
 
 Commands: init, doctor, onboard, mcp, instructions, repos, index, search, context, task,
           intent, health, portfolio, costs (stats), cache, sessions, bench,

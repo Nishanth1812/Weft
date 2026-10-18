@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "weft": {
-      "command": "ctx",
+      "command": "weft",
       "args": [
         "mcp",
         "serve"

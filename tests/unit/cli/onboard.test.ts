@@ -28,14 +28,14 @@ describe('onboard command', () => {
       const response = JSON.parse(output.join('')) as { data: { indexed: { chunks: number }; installed: Array<{ path: string }> } };
       expect(response.data.indexed.chunks).toBeGreaterThan(0);
       const config = JSON.parse(await readFile(join(project, 'opencode.json'), 'utf8'));
-      expect(config.mcp.weft.command).toEqual(['ctx', 'mcp', 'serve']);
+      expect(config.mcp.weft.command).toEqual(['weft', 'mcp', 'serve']);
       expect(response.data.installed[0]!.path).toBe(join(project, 'opencode.json'));
       const preview: string[] = [];
       expect(await runCli(['mcp', 'install', '--harness', 'claude-code', '--dry-run', '--json'], { stdout: (text) => preview.push(text), stderr: vi.fn() })).toBe(0);
       await expect(readFile(join(project, '.mcp.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       const doctor: string[] = [];
       expect(await runCli(['doctor', '--json'], { stdout: (text) => doctor.push(text), stderr: vi.fn() })).toBe(0);
-      expect(JSON.parse(doctor.join('')).data).toHaveProperty('ctxOnPath', expect.any(Boolean));
+      expect(JSON.parse(doctor.join('')).data).toHaveProperty('weftOnPath', expect.any(Boolean));
     } finally {
       process.chdir(previousCwd);
       for (const [key, value] of Object.entries(previousEnv)) value === undefined ? delete process.env[key] : process.env[key] = value;

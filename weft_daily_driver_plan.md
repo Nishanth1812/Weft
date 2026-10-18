@@ -7,9 +7,9 @@ Baseline: Phases 0–7 of `weft_master_implementation_plan.md` are done (31 test
 
 | # | Finding | Impact |
 |---|---|---|
-| F1 | `ctx` is not on PATH (`which ctx` fails) | Agents in T3 Code cannot call it at all |
+| F1 | `weft` is not on PATH (`which weft` fails) | Agents in T3 Code cannot call it at all |
 | F2 | No MCP server; only prose in `CLAUDE.md`/`AGENTS.md` | Models routinely ignore instructions about unfamiliar CLIs; tool calls are far more reliable |
-| F3 | `ctx search` ranks `tests/…instructions.test.ts` above `src/integrations/instructions.ts` for "instructions sync managed block" | Wrong file first = wasted tokens |
+| F3 | `weft search` ranks `tests/…instructions.test.ts` above `src/integrations/instructions.ts` for "instructions sync managed block" | Wrong file first = wasted tokens |
 | F4 | Chunks are fixed 100-line windows (`src/indexer/chunker.ts`), not symbol-aligned | Returns 680 tokens where a 15-line function would do |
 | F5 | Symbol extractor emits `catch`, `if` as symbols | Pollutes ranking and `symbols` output |
 | F6 | Output is pretty-printed JSON with escaped `\n` code | JSON overhead and escaping inflate the tokens the tool is meant to save |
@@ -20,11 +20,11 @@ Baseline: Phases 0–7 of `weft_master_implementation_plan.md` are done (31 test
 ## Milestones (ordered by value per effort)
 
 ### M1 — Get agents calling it (F1, F2, F8). ~1–2 days
-- `npm link` / documented install so `ctx` is on PATH; `ctx doctor` reports whether `ctx` resolves from a clean shell.
+- `npm link` / documented install so `weft` is on PATH; `weft doctor` reports whether `weft` resolves from a clean shell.
 - `src/mcp/server.ts`: stdio MCP server, no new heavy dependency (JSON-RPC over stdio is small; use `@modelcontextprotocol/sdk` only if hand-rolling costs more). Tools:
   `weft_search` (locations + 1-line snippets), `weft_context` (budgeted pack), `weft_read` (exact line range by chunk id), `weft_checkpoint`, `weft_resume`, `weft_health`.
-- `ctx mcp install --harness claude-code|codex|opencode|t3` writes the harness MCP config idempotently (managed-block approach already used for instructions).
-- `ctx onboard [path]`: register repo, index, sync instructions, install MCP config in one command.
+- `weft mcp install --harness claude-code|codex|opencode|t3` writes the harness MCP config idempotently (managed-block approach already used for instructions).
+- `weft onboard [path]`: register repo, index, sync instructions, install MCP config in one command.
 - Exit: a fresh Claude Code session in a new repo calls `weft_context` unprompted in ≥80% of exploration turns (check via telemetry tool-call counts).
 
 ### M2 — Retrieval quality (F3, F4, F5). ~2–3 days
@@ -40,10 +40,10 @@ Baseline: Phases 0–7 of `weft_master_implementation_plan.md` are done (31 test
 - Exit: median `context` output for golden queries ≤ 900 tokens at equal top-3 accuracy.
 
 ### M4 — Make the workflow stick. ~2 days
-- Claude Code `SessionStart` hook: injects `ctx task resume` summary plus `git` staleness (uses existing `runHookSafely`, <500ms budget).
+- Claude Code `SessionStart` hook: injects `weft task resume` summary plus `git` staleness (uses existing `runHookSafely`, <500ms budget).
 - `Stop`/`PreCompact` hook: auto-checkpoint, so continuity doesn't depend on the model remembering.
-- Background `ctx watch` (or index-on-demand with a fast no-change path, already <1s) so the index is never stale.
-- `ctx portfolio` as a morning command: dirty trees, stale branches, tasks with checkpoints.
+- Background `weft watch` (or index-on-demand with a fast no-change path, already <1s) so the index is never stale.
+- `weft portfolio` as a morning command: dirty trees, stale branches, tasks with checkpoints.
 
 ### M5 — Measure it (F9). ~2 days, run alongside M2–M4
 - Build the benchmark suite: 10 real tasks from your own repos (bugfix/refactor/feature) with test commands; conditions A/B/C already defined in `src/bench/types.ts`.

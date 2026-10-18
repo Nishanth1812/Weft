@@ -37,7 +37,7 @@ const paths = getUserPaths();
 const dbFile = join(paths.state, 'weft.db');
 
 function database(required = true): Database.Database {
-  if (required && !existsSync(dbFile)) fail('Weft is not initialized. Run `ctx init` first.', 3);
+  if (required && !existsSync(dbFile)) fail('Weft is not initialized. Run `weft init` first.', 3);
   const db = openDatabase(paths.state);
   try { migrate(db); } catch (error) { db.close(); throw error; }
   return db;
@@ -73,7 +73,7 @@ function repoRow(db: Database.Database, query?: string): { id: string; root_path
   const match = query ? rows.find((row) => row.id === query || row.display_name.toLowerCase() === query.toLowerCase() || same(row.root_path, resolve(query)))
     : rows.find((row) => same(row.root_path, root));
   if (match) return match;
-  if (!query && !rows.length) fail('No repositories are registered. Run `ctx repos register` first.', 3);
+  if (!query && !rows.length) fail('No repositories are registered. Run `weft repos register` first.', 3);
   if (!query) fail(`Current directory is not registered: ${root}`, 3);
   fail(`Repository not found: ${query}`, 3);
 }
@@ -105,12 +105,12 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     return { code: 0, data: { initialized: true, paths } };
   }
   if (group === 'doctor') {
-    if (!existsSync(dbFile) && !args.includes('--repair')) fail('Weft is not initialized. Run `ctx init` first.', 3);
+    if (!existsSync(dbFile) && !args.includes('--repair')) fail('Weft is not initialized. Run `weft init` first.', 3);
     const db = database(false);
     try {
       const integrity = db.prepare('PRAGMA integrity_check').pluck().get() as string;
       const warnings = integrity === 'ok' ? [] : [`SQLite integrity check: ${integrity}`];
-      const data = { node: process.version, database: integrity, repositories: allRepos(db).length, ctxOnPath: commandOnPath('ctx') };
+      const data = { node: process.version, database: integrity, repositories: allRepos(db).length, weftOnPath: commandOnPath('weft') };
       return { code: warnings.length ? 6 : 0, data, warnings };
     } finally { db.close(); }
   }
@@ -128,14 +128,14 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   if (group === 'hook') {
     if (sub === 'session-start') { const data = await runSessionStartHook({ stateDir: hookStateDir() }); return { code: 0, data: data || undefined }; }
     if (sub === 'stop' || sub === 'pre-compact') { await runCheckpointHook({ stateDir: hookStateDir() }); return { code: 0, data: '' }; }
-    fail('Use `ctx hook session-start|stop|pre-compact`.', 2);
+    fail('Use `weft hook session-start|stop|pre-compact`.', 2);
   }
   if (group === 'hooks') {
     const options = { projectRoot: process.cwd(), home: process.env.HOME ?? process.env.USERPROFILE, global: args.includes('--global'), dryRun: args.includes('--dry-run') };
-    // Calling node on the real CLI path skips the npm shim (~270ms per hook on Windows); --portable keeps plain `ctx`.
-    if (sub === 'install') return { code: 0, data: await installClaudeHooks({ ...options, bin: args.includes('--portable') || !process.argv[1] ? 'ctx' : `node "${realpathSync(resolve(process.argv[1])).replace(/\\/g, '/')}"` }) };
+    // Calling node on the real CLI path skips the npm shim (~270ms per hook on Windows); --portable keeps plain `weft`.
+    if (sub === 'install') return { code: 0, data: await installClaudeHooks({ ...options, bin: args.includes('--portable') || !process.argv[1] ? 'weft' : `node "${realpathSync(resolve(process.argv[1])).replace(/\\/g, '/')}"` }) };
     if (sub === 'uninstall') return { code: 0, data: await uninstallClaudeHooks(options) };
-    fail('Use `ctx hooks install|uninstall [--global] [--dry-run]`.', 2);
+    fail('Use `weft hooks install|uninstall [--global] [--dry-run]`.', 2);
   }
   if (group === 'onboard') {
     const target = positional(args.slice(1))[0] ?? process.cwd();
@@ -153,7 +153,7 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   }
   if (group === 'instructions') {
     const action = sub;
-    if (action !== 'sync' && action !== 'check') fail('Use `ctx instructions sync` or `check`.', 2);
+    if (action !== 'sync' && action !== 'check') fail('Use `weft instructions sync` or `check`.', 2);
     const root = await getGitRoot(process.cwd()); if (!root) fail('Current directory is not a Git repository.', 3);
     const dry = args.includes('--dry-run') || action === 'check';
     const checks = await Promise.all([
@@ -180,24 +180,24 @@ export async function runCommand(args: string[], compactOutput = false): Promise
       } finally { db.close(); }
     }
     if (sub === 'unregister') {
-      const name = positional(rest)[0]; if (!name) fail('Usage: ctx repos unregister <repo>', 2);
+      const name = positional(rest)[0]; if (!name) fail('Usage: weft repos unregister <repo>', 2);
       const db = database(); try { const repo = repoRow(db, name); db.prepare('DELETE FROM repositories WHERE id = ?').run(repo.id); return { code: 0, data: { unregistered: repo.display_name } }; } finally { db.close(); }
     }
     if (sub === 'fuzzy') {
-      const query = positional(rest).join(' '); if (!query) fail('Usage: ctx repos fuzzy <query>', 2);
+      const query = positional(rest).join(' '); if (!query) fail('Usage: weft repos fuzzy <query>', 2);
       const db = database(); try { const rows = allRepos(db); const result = fuzzyFindRepo(query, rows.map(({ name, rootPath, registeredAt }) => ({ name, rootPath, registeredAt }))); return { code: result.match ? 0 : 4, data: result, warnings: result.match ? [] : ['No unique repository match.'] }; } finally { db.close(); }
     }
     if (sub === 'status') {
       const db = database(); try { const repo = repoRow(db, positional(rest)[0]); const git = await getWorkingTreeStatus(repo.root_path); const index = db.prepare('SELECT active_generation FROM repo_index_state WHERE repo_id = ?').get(repo.id); return { code: 0, data: { repo, git, index } }; } finally { db.close(); }
     }
-    fail('Use `ctx repos register|unregister|list|fuzzy|status`.', 2);
+    fail('Use `weft repos register|unregister|list|fuzzy|status`.', 2);
   }
   if (group === 'index') {
     const db = database(); try { const repo = repoRow(db, positional(args.slice(1))[0]); return { code: 0, data: await indexRepository(db, repo.id, repo.root_path, { force: args.includes('--force') }) }; } finally { db.close(); }
   }
   if (group === 'search' || group === 'context') {
     const values = positional(args.slice(1));
-    if (!values.length) fail(`Usage: ctx ${group} <query> [repo]`, 2);
+    if (!values.length) fail(`Usage: weft ${group} <query> [repo]`, 2);
     const db = database(); try {
       let repoIndex = -1;
       for (let i = values.length - 1; i >= 0; i--) {
@@ -205,7 +205,7 @@ export async function runCommand(args: string[], compactOutput = false): Promise
       }
       const repoArg = repoIndex < 0 ? undefined : values[repoIndex];
       const query = values.filter((_value, index) => index !== repoIndex).join(' ');
-      if (!query) fail(`Usage: ctx ${group} <query> [repo]`, 2);
+      if (!query) fail(`Usage: weft ${group} <query> [repo]`, 2);
       const repo = repoRow(db, repoArg);
       if (group === 'search') {
         const hits = searchChunks(db, repo.id, query, requireCount(option(args, '--limit'), '--limit', 20));
@@ -222,16 +222,16 @@ export async function runCommand(args: string[], compactOutput = false): Promise
         const parts = positional(rest); const repos = allRepos(db); const last = parts.at(-1);
         const target = last ? repos.find((repo) => repo.name.toLowerCase() === last.toLowerCase() || repo.id === last || repo.rootPath.toLowerCase() === resolve(last).toLowerCase()) : undefined;
         const title = (target ? parts.slice(0, -1) : parts).join(' ');
-        if (!title) fail('Usage: ctx task start <title> [repo]', 2);
+        if (!title) fail('Usage: weft task start <title> [repo]', 2);
         return { code: 0, data: createTask(db, repoRow(db, target?.id).id, title) };
       }
-      if (sub === 'resume') { const id = positional(rest)[0]; if (!id) fail('Usage: ctx task resume <id>', 2); const task = db.prepare('SELECT repo_id FROM tasks WHERE id = ?').get(id) as { repo_id: string } | undefined; if (!task) fail(`Task not found: ${id}`, 3); const repo = repoRow(db, task.repo_id); const git = await getWorkingTreeStatus(repo.root_path); const fingerprint = computeWorkingTreeFingerprint(git, await getHeadCommit(repo.root_path) ?? '', git.branch); return { code: 0, data: resumeTask(db, id, fingerprint) }; }
-      if (sub === 'checkpoint') { const id = positional(rest)[0]; if (!id) fail('Usage: ctx task checkpoint <id>', 2); const task = db.prepare('SELECT repo_id FROM tasks WHERE id = ?').get(id) as { repo_id: string } | undefined; if (!task) fail(`Task not found: ${id}`, 3); const repo = repoRow(db, task.repo_id); const git = await getWorkingTreeStatus(repo.root_path); const fingerprint = computeWorkingTreeFingerprint(git, await getHeadCommit(repo.root_path) ?? '', git.branch); return { code: 0, data: saveCheckpoint(db, { taskId: id, workingTreeFingerprint: fingerprint, objective: '', status: 'active', findings: [], decisions: [], verification: [], nextAction: '' }) }; }
-      fail('Use `ctx task start|resume|checkpoint`.', 2);
+      if (sub === 'resume') { const id = positional(rest)[0]; if (!id) fail('Usage: weft task resume <id>', 2); const task = db.prepare('SELECT repo_id FROM tasks WHERE id = ?').get(id) as { repo_id: string } | undefined; if (!task) fail(`Task not found: ${id}`, 3); const repo = repoRow(db, task.repo_id); const git = await getWorkingTreeStatus(repo.root_path); const fingerprint = computeWorkingTreeFingerprint(git, await getHeadCommit(repo.root_path) ?? '', git.branch); return { code: 0, data: resumeTask(db, id, fingerprint) }; }
+      if (sub === 'checkpoint') { const id = positional(rest)[0]; if (!id) fail('Usage: weft task checkpoint <id>', 2); const task = db.prepare('SELECT repo_id FROM tasks WHERE id = ?').get(id) as { repo_id: string } | undefined; if (!task) fail(`Task not found: ${id}`, 3); const repo = repoRow(db, task.repo_id); const git = await getWorkingTreeStatus(repo.root_path); const fingerprint = computeWorkingTreeFingerprint(git, await getHeadCommit(repo.root_path) ?? '', git.branch); return { code: 0, data: saveCheckpoint(db, { taskId: id, workingTreeFingerprint: fingerprint, objective: '', status: 'active', findings: [], decisions: [], verification: [], nextAction: '' }) }; }
+      fail('Use `weft task start|resume|checkpoint`.', 2);
     } finally { db.close(); }
   }
   if (group === 'checkpoint') {
-    const id = sub; if (!id) fail('Usage: ctx checkpoint <id>', 2);
+    const id = sub; if (!id) fail('Usage: weft checkpoint <id>', 2);
     const db = database(); try {
       const task = db.prepare('SELECT repo_id FROM tasks WHERE id = ?').get(id) as { repo_id: string } | undefined;
       if (!task) fail(`Task not found: ${id}`, 3);
@@ -242,9 +242,9 @@ export async function runCommand(args: string[], compactOutput = false): Promise
   }
   if (group === 'intent') {
     const path = join(paths.instructions, 'intent.md');
-    if (sub === 'show') { if (!existsSync(path)) fail('intent.md is missing. Run `ctx init` first.', 3); return { code: 0, data: parseIntent(await readFile(path, 'utf8')) }; }
+    if (sub === 'show') { if (!existsSync(path)) fail('intent.md is missing. Run `weft init` first.', 3); return { code: 0, data: parseIntent(await readFile(path, 'utf8')) }; }
     if (sub === 'edit') { await mkdir(paths.instructions, { recursive: true }); if (!existsSync(path)) await writeFile(path, generateDefaultIntent(), 'utf8'); const editor = process.env.EDITOR ?? process.env.VISUAL; if (!editor) fail('$EDITOR is not set.', 3); await new Promise<void>((resolvePromise, reject) => { const child = spawn(editor, [path], { stdio: 'inherit' }); child.once('error', reject); child.once('exit', (code: number | null) => code === 0 ? resolvePromise() : reject(new Error(`Editor exited with code ${code}`))); }); return { code: 0, data: { path } }; }
-    fail('Use `ctx intent show|edit`.', 2);
+    fail('Use `weft intent show|edit`.', 2);
   }
   if (group === 'health') { const db = database(); try { const repo = repoRow(db, positional(args.slice(1))[0]); const data = await checkRepoHealth(repo.root_path); return { code: findings(data) ? 4 : 0, data, warnings: findings(data) ? ['Health findings were reported.'] : [] }; } finally { db.close(); } }
   if (group === 'portfolio') { const db = database(); try { const repos = allRepos(db).map((repo) => ({ name: repo.name, rootPath: repo.rootPath, registeredAt: repo.registeredAt })); const data = await generatePortfolioSummary(repos); return { code: findings(data.totals) ? 4 : 0, data }; } finally { db.close(); } }
@@ -276,7 +276,7 @@ export async function runCommand(args: string[], compactOutput = false): Promise
     const report = await runLiveSuite(await loadSuite(suitePath), harness);
     return { code: 0, data: { ...report, usageProvenance: 'Each trial labels provider_reported or estimated usage.', costPerSuccessfulTaskVariance: 'Population variance in costMicros squared.' } };
   }
-  if (group === 'bench') fail('Use `ctx bench retrieval [--repo <name>] [--json]` or `ctx bench run --suite <file> --harness <template>`.', 2);
+  if (group === 'bench') fail('Use `weft bench retrieval [--repo <name>] [--json]` or `weft bench run --suite <file> --harness <template>`.', 2);
   if (group === 'clean') {
     const db = database(); try {
       const scope = option(args, '--scope', 'indexes'); if (!['indexes', 'all'].includes(scope!)) fail('--scope must be indexes or all', 2);
