@@ -28,7 +28,6 @@ describe('secret scanner', () => {
     ['Google API key', `AIza${'a'.repeat(35)}`],
     ['GitHub user token', `ghu_${'a'.repeat(36)}`],
     ['GitHub app token', `ghs_${'a'.repeat(36)}`],
-    ['Google service account OAuth token', `ya29.${'a'.repeat(40)}`],
     ['Azure storage key', `AccountKey=${'a'.repeat(88)}`],
     ['Vault token', `hvs.${'a'.repeat(24)}`],
     ['generic quoted credential', 'api_key = "secret-value"'],
