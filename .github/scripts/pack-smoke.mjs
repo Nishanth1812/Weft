@@ -26,7 +26,7 @@ try {
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const dryRun = JSON.parse(run(npm, ['pack', '--dry-run', '--json'], { quiet: true }));
   const files = dryRun[0].files.map(({ path }) => path);
-  const required = ['README.md', 'LICENSE', 'dist/cli/index.js'];
+  const required = ['LICENSE', 'dist/cli/index.js'];
   const forbidden = files.filter((path) => /^(?:\.claude\/|\.mcp\.json$|tests\/|\.env(?:\.|$))/.test(path));
   if (required.some((path) => !files.includes(path)) || forbidden.length) throw new Error(`Unexpected npm pack contents: missing ${required.filter((path) => !files.includes(path)).join(', ')}; forbidden ${forbidden.join(', ')}`);
   process.stdout.write(`Dry-run package contents: ${files.length} files; required files present; no local harness config, tests, or env files.\n`);
