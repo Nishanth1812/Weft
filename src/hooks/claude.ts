@@ -111,7 +111,7 @@ export async function runSessionStartHook(options: { cwd?: string; stateDir: str
           if (files.length) lines.push(`Files: ${files.join(', ')}`);
         }
       }
-      lines.push('Weft tools: weft_* MCP tools and `weft context` are available.');
+      lines.push('Explore code with mcp__weft__weft_context / weft_search (load via ToolSearch if deferred) before Grep/Glob/Read; weft_read for line ranges.');
       let output = lines.join('\n');
       while (estimateTokens(output) > 400) { output = lines.slice(0, -1).join('\n') + '\n' + lines.at(-1); if (lines.length <= 1) break; lines.splice(1, 1); }
       return redactSafe(output);

@@ -19,9 +19,9 @@ import { indexRepository } from '../indexer/indexer.js';
 import { recordToolCall, baselineTokensForChunks } from '../telemetry/toolCalls.js';
 
 export const MCP_TOOLS = [
-  { name: 'weft_search', description: 'Find indexed code locations.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } },
-  { name: 'weft_context', description: 'Pack relevant code within a token budget.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, budget: { type: 'number' } }, required: ['query'] } },
-  { name: 'weft_read', description: 'Read a safe file range from disk.', inputSchema: { type: 'object', properties: { path: { type: 'string' }, startLine: { type: 'number' }, endLine: { type: 'number' } }, required: ['path', 'startLine', 'endLine'] } },
+  { name: 'weft_search', description: 'Search the codebase to find where a function, symbol, file or feature lives. Use instead of Grep/Glob; returns ranked file:line hits.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } }, required: ['query'] } },
+  { name: 'weft_context', description: 'Explore code for a question or task: returns the most relevant snippets packed to a token budget. Use first, instead of grepping or reading whole files.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, budget: { type: 'number' } }, required: ['query'] } },
+  { name: 'weft_read', description: 'Read an exact line range of a file (cheaper than reading the whole file); use after weft_search/weft_context gives a location.', inputSchema: { type: 'object', properties: { path: { type: 'string' }, startLine: { type: 'number' }, endLine: { type: 'number' } }, required: ['path', 'startLine', 'endLine'] } },
   { name: 'weft_checkpoint', description: 'Save task continuity state.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, objective: { type: 'string' }, findings: { type: 'array', items: { type: 'string' } }, decisions: { type: 'array', items: { type: 'string' } }, nextAction: { type: 'string' } } } },
   { name: 'weft_resume', description: 'Resume a task checkpoint.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' } } } },
   { name: 'weft_health', description: 'Check repository health.', inputSchema: { type: 'object', properties: {} } },

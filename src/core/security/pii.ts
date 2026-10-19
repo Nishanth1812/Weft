@@ -2,7 +2,7 @@ type PIIKind = 'EMAIL' | 'PHONE' | 'SSN';
 
 const piiPatterns: readonly { kind: PIIKind; regex: RegExp }[] = [
   { kind: 'EMAIL', regex: /(?<![A-Z0-9.!#$%&'*+/=?^_`{|}~-])[A-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+\b/gi },
-  { kind: 'PHONE', regex: /(?<!\d)(?:\(\d{3}\)[ -]?\d{3}[-. ]?\d{4}|\d{3}[-. ]\d{3}[-. ]\d{4}|\d{10})(?!\d)/g },
+  { kind: 'PHONE', regex: /(?<!\d)(?:\(\d{3}\)[ -]?\d{3}[-. ]?\d{4}|\d{3}[-. ]\d{3}[-. ]\d{4})(?!\d)/g }, // bare 10-digit runs are token counts, epoch seconds and ids, not phones
   { kind: 'SSN', regex: /\b\d{3}-\d{2}-\d{4}\b/g },
 ];
 
