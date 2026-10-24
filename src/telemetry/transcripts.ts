@@ -16,7 +16,10 @@ const normalize = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '')
 function repoFor(db: Database.Database, cwd: string | null): string | null {
   if (!cwd) return null;
   const repos = db.prepare('SELECT id, root_path FROM repositories').all() as Array<{ id: string; root_path: string }>;
-  return repos.find((r) => normalize(r.root_path) === normalize(cwd))?.id ?? null;
+  // A session started in a subfolder still belongs to the repo that contains it; the deepest root wins.
+  const dir = normalize(cwd);
+  const inside = repos.filter((r) => { const root = normalize(r.root_path); return dir === root || dir.startsWith(`${root}/`); });
+  return inside.sort((a, b) => b.root_path.length - a.root_path.length)[0]?.id ?? null;
 }
 
 function record(db: Database.Database, id: string, harness: string, cwd: string | null, usage: Usage, provenance: 'harness_reported' | 'provider_reported') {
