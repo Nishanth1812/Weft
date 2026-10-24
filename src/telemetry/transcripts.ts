@@ -25,7 +25,7 @@ function record(db: Database.Database, id: string, harness: string, cwd: string 
     ON CONFLICT(id) DO UPDATE SET repo_id=excluded.repo_id, model=excluded.model, ended_at=excluded.ended_at`)
     .run(`${harness}:${id}`, repoId, harness, usage.model, usage.at, usage.at);
   const sessionId = `${harness}:${id}`;
-  const cost = usage.model ? calculateCostMicros(usage.model, usage.input + usage.cached, usage.output, usage.cached).costMicros : null;
+  const cost = usage.model ? calculateCostMicros(usage.model, usage.input + usage.cached, usage.output, usage.cached, usage.write).costMicros : null;
   const eventId = `${harness}:${id}`;
   db.prepare(`INSERT INTO usage_events (id, session_id, source, provenance, observed_at, model, input_tokens, output_tokens, cached_input_tokens, cache_write_tokens, cost_micros)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
