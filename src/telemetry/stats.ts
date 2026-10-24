@@ -11,7 +11,9 @@ export async function getStats(db: Database.Database, since?: string) {
     COALESCE(SUM((SELECT SUM(calls) FROM session_tool_calls t WHERE t.session_id=s.id AND lower(t.tool) LIKE '%weft_%')),0) AS weftCalls,
     COALESCE(SUM((SELECT SUM(calls) FROM session_tool_calls t WHERE t.session_id=s.id AND t.tool IN ('Grep','Glob','Read'))),0) AS exploreCalls
     FROM sessions s WHERE (? IS NULL OR s.started_at>=?)`).get(since ?? null, since ?? null) as { sessions: number; adopted: number; weftCalls: number; exploreCalls: number };
-  const saved = db.prepare('SELECT COALESCE(SUM(returned_tokens),0) AS returned, COALESCE(SUM(baseline_tokens),0) AS baseline FROM tool_calls WHERE (? IS NULL OR observed_at>=?)')
-    .get(since ?? null, since ?? null) as { returned: number; baseline: number };
-  return { ...usage, cost: usage.cost == null ? null : Number(usage.cost), adoption: { percent: adoption.sessions ? Math.round(adoption.adopted * 100 / adoption.sessions) : 0, sessionsUsingWeft: adoption.adopted, weftCalls: adoption.weftCalls, explorationCalls: adoption.exploreCalls }, toolTokens: saved };
+  const toolCalls = (hook: boolean) => db.prepare(`SELECT COUNT(*) AS calls, COALESCE(SUM(returned_tokens),0) AS returned, COALESCE(SUM(baseline_tokens),0) AS baseline FROM tool_calls WHERE tool ${hook ? '=' : '!='} 'hook_prompt' AND (? IS NULL OR observed_at>=?)`)
+    .get(since ?? null, since ?? null) as { calls: number; returned: number; baseline: number };
+  const saved = toolCalls(false);
+  const hook = toolCalls(true);
+  return { ...usage, cost: usage.cost == null ? null : Number(usage.cost), adoption: { percent: adoption.sessions ? Math.round(adoption.adopted * 100 / adoption.sessions) : 0, sessionsUsingWeft: adoption.adopted, weftCalls: adoption.weftCalls, explorationCalls: adoption.exploreCalls }, toolTokens: saved, promptHook: { injections: hook.calls, returned: hook.returned, baseline: hook.baseline } };
 }
