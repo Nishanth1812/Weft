@@ -35,7 +35,7 @@ export function findMcpRepo(db: Database.Database, gitRoot: string) {
 function requiredString(args: Args, name: string): string { const value = args[name]; if (typeof value !== 'string' || !value.trim()) throw Object.assign(new Error(`${name} is required`), { code: -32602 }); return value; }
 const filesFor = (db: Database.Database, repoId: string, paths: string[]) => paths.length ? db.prepare(`SELECT id AS file_id FROM files WHERE repo_id = ? AND path IN (${paths.map(() => '?').join(',')})`).all(repoId, ...paths) as Array<{ file_id: number }> : [];
 
-export function createMcpHandler(db: Database.Database, repo: { id: string; rootPath: string } | null, options: { index?: typeof indexRepository } = {}) {
+export function createMcpHandler(db: Database.Database, repo: { id: string; rootPath: string } | null, options: { index?: typeof indexRepository; noRepoReason?: 'not-git' | 'not-registered' } = {}) {
   let lastFingerprint: string | undefined, indexing: Promise<unknown> | undefined, refreshing: Promise<boolean> | undefined, refreshPending = false;
   const index = options.index ?? indexRepository;
   const refresh = (): Promise<boolean> => {
@@ -79,7 +79,7 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
     const args = (params.arguments ?? {}) as Args;
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw Object.assign(new Error('arguments must be an object'), { code: -32602 });
     if (!MCP_TOOLS.some(tool => tool.name === name)) return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
-    if (!repo) return { content: [{ type: 'text', text: 'Weft MCP tools need a Git repository. Start the harness from inside a Git workspace.' }], isError: false };
+    if (!repo) return { content: [{ type: 'text', text: options.noRepoReason === 'not-registered' ? 'Weft has not indexed this repository yet; it will register on the next session start. Use Grep/Glob/Read for now.' : 'This folder is not a Git repository, so Weft cannot index it. Use Grep/Glob/Read instead.' }], isError: false };
     const started = Date.now(); let text = ''; let baseline: number | null = null; let note = '';
     try {
       if (['weft_search', 'weft_context'].includes(name)) note = await refresh() ? '\nindex refreshing' : '';
@@ -142,8 +142,8 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
   };
 }
 
-export function serveMcp(db: Database.Database, repo: { id: string; rootPath: string } | null, streams = { input: process.stdin, output: process.stdout }): void {
-  const handle = createMcpHandler(db, repo); const lines = createInterface({ input: streams.input });
+export function serveMcp(db: Database.Database, repo: { id: string; rootPath: string } | null, streams = { input: process.stdin, output: process.stdout }, noRepoReason?: 'not-git' | 'not-registered'): void {
+  const handle = createMcpHandler(db, repo, { noRepoReason }); const lines = createInterface({ input: streams.input });
   let closed = false;
   const autoCheckpoint = async () => {
     if (closed || !repo) return; closed = true;

@@ -184,7 +184,7 @@ export async function runCommand(args: string[], compactOutput = false): Promise
         else await indexRepository(db, repo.id, repo.rootPath);
       }
     }
-    serveMcp(db, repo ? { id: repo.id, rootPath: repo.rootPath } : null);
+    serveMcp(db, repo ? { id: repo.id, rootPath: repo.rootPath } : null, undefined, root ? 'not-registered' : 'not-git');
     return await new Promise<Result>(() => {});
   }
   if (group === 'mcp' && sub === 'install') {
