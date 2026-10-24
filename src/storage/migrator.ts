@@ -94,7 +94,11 @@ CREATE TABLE tool_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, repo_id TEXT REFE
 CREATE INDEX idx_tool_calls_repo_date ON tool_calls(repo_id, observed_at);
 CREATE TABLE session_tool_calls (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, calls INTEGER NOT NULL, PRIMARY KEY(session_id, tool));
 `;
-const migrations = [{ version: 1, sql: v1 }, { version: 2, sql: v2 }];
+// Search looks up each hit's symbols by file; without this every lookup scanned the whole symbols table.
+const v3 = `
+CREATE INDEX idx_symbols_file ON symbols(file_id);
+`;
+const migrations = [{ version: 1, sql: v1 }, { version: 2, sql: v2 }, { version: 3, sql: v3 }];
 const checksum = (sql: string) => createHash('sha256').update(sql).digest('hex');
 
 export function migrate(db: Database.Database, now: () => string = () => new Date().toISOString()): number[] {
