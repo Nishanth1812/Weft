@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { openDatabase } from '../storage/db.js';
 import { hookGitRoot, repoFor } from './claude.js';
@@ -61,4 +62,22 @@ export async function runPromptHook(options: { cwd?: string; stateDir: string; p
     try { recordToolCall(db, { repoId: repo.id, tool: 'hook_prompt', returnedTokens: estimateTokens(text), baselineTokens: picked.reduce((sum, hit) => sum + Math.ceil(hit.size / 4 * 1.1), 0), ms: Date.now() - started }); } catch { /* Telemetry must not interrupt the session. */ }
     return text;
   } finally { db.close(); }
+}
+
+const LARGE_READ_BYTES = 32 * 1024;
+
+/** PreToolUse(Read): a whole-file read of a big file in an indexed repo costs context on every later turn, so suggest a ranged read instead. Never blocks. */
+export async function runReadNudge(options: { cwd?: string; stateDir: string; filePath?: string; ranged?: boolean }): Promise<string> {
+  if (!options.filePath || options.ranged || /(?:lock\.json|\.lock|\.min\.\w+|\.map)$/i.test(options.filePath)) return '';
+  const size = await stat(options.filePath).then((info) => (info.isFile() ? info.size : 0), () => 0);
+  if (size < LARGE_READ_BYTES) return '';
+  const root = await hookGitRoot(resolve(options.cwd ?? process.cwd()));
+  if (!root) return '';
+  const db = openDatabase(options.stateDir);
+  try {
+    if (!repoFor(db, root)) return '';
+  } finally { db.close(); }
+  const tokens = Math.ceil(size / 4 * 1.1);
+  const additionalContext = `This file is about ${Math.round(tokens / 1000)}K tokens and every later turn re-reads it from context. Prefer mcp__weft__weft_search / weft_context to find the part you need, then Read with offset and limit (or weft_read by line range).`;
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext } });
 }
