@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { estimateTokens } from '../core/estimate/tokenEstimator.js';
 import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES } from '../integrations/claude-code/index.js';
+import { syncCodexInstructions, CODEX_GUIDELINES } from '../integrations/codex/index.js';
 import { installMcpConfig } from '../integrations/mcpConfig.js';
 import { installClaudeHooks, uninstallClaudeHooks } from '../hooks/claude.js';
 import { openDatabase } from '../storage/db.js';
@@ -55,6 +56,12 @@ function execute(command: string, cwd: string, env = process.env): Promise<{ cod
   });
 }
 function usage(output: string): { tokens?: number; costMicros?: number } {
+  // opencode --format json streams one event per line; each step_finish carries that step's tokens and cost.
+  const steps = output.split(/\r?\n/).flatMap((line) => { try { const event = JSON.parse(line) as { type?: string; part?: { cost?: number; tokens?: { input?: number; output?: number; reasoning?: number } } }; return event.type === 'step_finish' && event.part ? [event.part] : []; } catch { return []; } });
+  if (steps.length) {
+    const tokens = steps.reduce((sum, step) => sum + (step.tokens?.input ?? 0) + (step.tokens?.output ?? 0) + (step.tokens?.reasoning ?? 0), 0);
+    return { ...(tokens > 0 ? { tokens } : {}), costMicros: Math.round(steps.reduce((sum, step) => sum + (step.cost ?? 0), 0) * 1_000_000) };
+  }
   try {
     const json = JSON.parse(output) as Record<string, unknown>;
     const usage = (json.usage && typeof json.usage === 'object' ? json.usage : json) as Record<string, unknown>;
@@ -79,11 +86,13 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
     const work = await mkdtemp(join(tmpdir(), 'weft-bench-'));
     const repo = join(work, basename(resolve(task.repoPath)));
     const started = Date.now();
+    const opencode = /\bopencode\b/.test(harnessTemplate);
     try {
       await cp(resolve(task.repoPath), repo, { recursive: true, filter: (source) => !/[\\/](?:\.git|node_modules|dist|coverage)(?:[\\/]|$)/.test(source) });
       await applySuitePatches(repo, task.setup);
       await removeWeftSetup(repo);
       if (condition !== 'A') await syncClaudeInstructions(repo, CLAUDE_CODE_GUIDELINES);
+      if (condition !== 'A' && opencode) await syncCodexInstructions(repo, CODEX_GUIDELINES); // opencode reads AGENTS.md, not CLAUDE.md
       // Harnesses pass --strict-mcp-config --mcp-config .mcp.json, so A and B get an explicitly empty server list.
       if (condition !== 'C') await writeFile(join(repo, '.mcp.json'), '{"mcpServers":{}}\n', 'utf8');
       if (condition === 'C') {
@@ -106,15 +115,18 @@ export async function runLiveSuite(tasks: SuiteTask[], harnessTemplate: string, 
         const config = JSON.parse(await readFile(configPath, 'utf8')) as { mcpServers: Record<string, Record<string, unknown>> };
         config.mcpServers.weft = { command: process.execPath, args: [resolve(process.argv[1] ?? 'dist/cli/index.js'), 'mcp', 'serve'], env: process.platform === 'win32' ? { LOCALAPPDATA: localAppData } : { XDG_STATE_HOME: join(work, 'weft-state') } };
         await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+        if (opencode) await writeFile(join(repo, 'opencode.json'), JSON.stringify({ mcp: { weft: { type: 'local', command: [process.execPath, resolve(process.argv[1] ?? 'dist/cli/index.js'), 'mcp', 'serve'], environment: config.mcpServers.weft!.env, enabled: true } } }, null, 2), 'utf8');
       }
       const prompt = task.prompt.replaceAll('{condition}', condition).replaceAll('{repoPath}', repo);
       const command = fillTemplate(harnessTemplate, { prompt, repoPath: repo });
       // A harness that cannot start (rate or usage limit, network) says nothing about the task: back off and retry before recording a failure.
-      let harness = await execute(command, repo);
+      // A private config dir keeps the user's global opencode MCP servers and AGENTS.md out of every condition.
+      const env = { ...process.env, XDG_CONFIG_HOME: join(work, 'xdg') };
+      let harness = await execute(command, repo, env);
       for (const wait of RETRY_WAITS_MS) {
         if (harness.code === 0) break;
         await new Promise((done) => setTimeout(done, wait));
-        harness = await execute(command, repo);
+        harness = await execute(command, repo, env);
       }
       const parsed = usage(harness.stdout);
       const test = harness.code === 0 ? await execute(task.testCommand, repo) : { code: 1, stdout: '', stderr: harness.stderr };
