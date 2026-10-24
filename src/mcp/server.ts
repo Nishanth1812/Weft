@@ -142,8 +142,8 @@ export function createMcpHandler(db: Database.Database, repo: { id: string; root
   };
 }
 
-export function serveMcp(db: Database.Database, repo: { id: string; rootPath: string } | null, streams = { input: process.stdin, output: process.stdout }, noRepoReason?: 'not-git' | 'not-registered'): void {
-  const handle = createMcpHandler(db, repo, { noRepoReason }); const lines = createInterface({ input: streams.input });
+export function serveMcp(db: Database.Database, repo: { id: string; rootPath: string } | null, streams = { input: process.stdin, output: process.stdout }, noRepoReason?: 'not-git' | 'not-registered', handler?: ReturnType<typeof createMcpHandler>): void {
+  const handle = handler ?? createMcpHandler(db, repo, { noRepoReason }); const lines = createInterface({ input: streams.input });
   let closed = false;
   const autoCheckpoint = async () => {
     if (closed || !repo) return; closed = true;

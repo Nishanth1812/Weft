@@ -21,7 +21,10 @@ export async function runHookCommand(event: string | undefined): Promise<{ code:
     if (event !== 'user-prompt-submit') prefetchGitState(process.cwd());
     const data = await runHookSafely(async () => {
       if (event === 'user-prompt-submit') return (await import('../hooks/prompt.js')).runPromptHook({ stateDir: hookStateDir(), cwd: input.cwd, prompt: input.prompt ?? '' });
-      if (event === 'session-start') { await ensureRepoOnboarded(process.cwd()); return runSessionStartHook({ stateDir: hookStateDir() }); }
+      if (event === 'session-start') { const onboarded = await ensureRepoOnboarded(process.cwd());
+        if (onboarded.reason === 'not-git') return (await import('../onboarding/workspace.js')).workspaceHint(process.cwd(), hookStateDir());
+        return runSessionStartHook({ stateDir: hookStateDir() });
+      }
       await runCheckpointHook({ stateDir: hookStateDir() });
       return '';
     }, 400);

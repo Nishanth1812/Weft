@@ -18,6 +18,8 @@ import { getGitRoot, getHeadCommit, getWorkingTreeStatus } from '../../core/gits
 import { computeWorkingTreeFingerprint } from '../../core/fingerprint/hasher.js';
 import { normalizeCanonicalPath } from '../../config/paths.js';
 import { fuzzyFindRepo } from '../../core/registry/repoRegistry.js';
+import { onboardWorkspace } from '../../onboarding/workspace.js';
+import { createWorkspaceHandler } from '../../mcp/workspace.js';
 import { syncClaudeInstructions, CLAUDE_CODE_GUIDELINES, installClaudeHooks, uninstallClaudeHooks } from '../../integrations/claude-code/index.js';
 import { runHookCommand } from '../hookCommand.js';
 import { syncCodexInstructions, CODEX_GUIDELINES } from '../../integrations/codex/index.js';
@@ -184,7 +186,9 @@ export async function runCommand(args: string[], compactOutput = false): Promise
         else await indexRepository(db, repo.id, repo.rootPath);
       }
     }
-    serveMcp(db, repo ? { id: repo.id, rootPath: repo.rootPath } : null, undefined, root ? 'not-registered' : 'not-git');
+    // Not inside a repo but above some: serve the child repos as one workspace.
+    const children = root ? [] : await onboardWorkspace(db, process.cwd());
+    serveMcp(db, repo ? { id: repo.id, rootPath: repo.rootPath } : null, undefined, root ? 'not-registered' : 'not-git', children.length ? createWorkspaceHandler(db, children) : undefined);
     return await new Promise<Result>(() => {});
   }
   if (group === 'mcp' && sub === 'install') {
